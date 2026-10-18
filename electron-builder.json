@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.courseplex.app",
+  "productName": "CoursePlex",
+  "copyright": "Copyright © 2026 CoursePlex",
+  "directories": {
+    "output": "dist-electron"
+  },
+  "files": [
+    "electron/**/*",
+    ".next/standalone/**/*",
+    "package.json"
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "CoursePlex"
+  }
+}

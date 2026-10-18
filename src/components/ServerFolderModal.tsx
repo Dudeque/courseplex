@@ -28,6 +28,35 @@ export function ServerFolderModal() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  const isElectron =
+    typeof window !== 'undefined' &&
+    Boolean((window as unknown as { electronAPI?: { isElectron?: boolean } }).electronAPI?.isElectron);
+
+  const handleBrowseElectron = async () => {
+    const api = (window as unknown as { electronAPI?: { selectDirectory: () => Promise<string | null> } }).electronAPI;
+    if (api?.selectDirectory) {
+      const selected = await api.selectDirectory();
+      if (selected) {
+        setPathInput(selected);
+        setLoading(true);
+        setError(null);
+        setSuccess(null);
+        try {
+          await connectServerDirectory(selected);
+          setSuccess(`Connected: ${selected}`);
+          setTimeout(() => {
+            setFolderModalOpen(false);
+          }, 1200);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'Failed to connect folder';
+          setError(msg);
+        } finally {
+          setLoading(false);
+        }
+      }
+    }
+  };
+
   useEffect(() => {
     if (serverCoursesDir) {
       setPathInput(serverCoursesDir);
@@ -112,6 +141,25 @@ export function ServerFolderModal() {
 
         {/* Form */}
         <form onSubmit={handleConnect} className="space-y-4">
+          {isElectron && (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={handleBrowseElectron}
+                disabled={loading}
+                className="w-full py-3 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-xl shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Folder className="w-4 h-4" />
+                <span>Browse Windows Folders (Native Dialog)</span>
+              </button>
+              <div className="relative flex py-1 items-center">
+                <div className="flex-grow border-t border-white/10" />
+                <span className="flex-shrink mx-3 text-gray-500 text-[10px] uppercase tracking-wider">or enter path manually</span>
+                <div className="flex-grow border-t border-white/10" />
+              </div>
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-gray-300 flex items-center justify-between">
               <span>Full Folder Path on Your Mac/PC:</span>

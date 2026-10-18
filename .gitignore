@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local courseplex server config
 .courseplex-config.json
+
+# electron build outputs
+dist-electron
