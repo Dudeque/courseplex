@@ -13,13 +13,11 @@
       "repo": "courseplex"
     }
   ],
-  "asar": true,
-  "asarUnpack": [
-    ".next/standalone/**/*"
-  ],
+  "asar": false,
   "files": [
     "electron/**/*",
-    ".next/standalone/**/*",
+    "standalone/**/*",
+    "standalone/.next/**/*",
     "package.json"
   ],
   "win": {

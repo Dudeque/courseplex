@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, utilityProcess } = require('electron');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const http = require('node:http');
@@ -12,42 +12,66 @@ let activePort = process.env.PORT || DEFAULT_PORT;
 
 function getStandaloneDir() {
   if (!app.isPackaged) {
+    const devStandalone = path.join(__dirname, '..', 'standalone');
+    if (fs.existsSync(devStandalone)) return devStandalone;
     return path.join(__dirname, '..', '.next', 'standalone');
   }
 
-  // 1. Electron-builder with asar: true and asarUnpack
-  const unpackedPath = path.join(process.resourcesPath, 'app.asar.unpacked', '.next', 'standalone');
-  if (fs.existsSync(unpackedPath)) {
-    return unpackedPath;
+  // 1. Packaged with asar: false (resources/app/standalone)
+  const appStandalone = path.join(process.resourcesPath, 'app', 'standalone');
+  if (fs.existsSync(appStandalone)) {
+    return appStandalone;
   }
 
-  // 2. Electron-builder with asar: false
-  const appPath = path.join(process.resourcesPath, 'app', '.next', 'standalone');
-  if (fs.existsSync(appPath)) {
-    return appPath;
+  // 2. Packaged with asarUnpack (resources/app.asar.unpacked/standalone)
+  const unpackedStandalone = path.join(process.resourcesPath, 'app.asar.unpacked', 'standalone');
+  if (fs.existsSync(unpackedStandalone)) {
+    return unpackedStandalone;
   }
 
-  // 3. Fallback to appPath
+  // 3. Fallbacks
+  const dotNextApp = path.join(process.resourcesPath, 'app', '.next', 'standalone');
+  if (fs.existsSync(dotNextApp)) {
+    return dotNextApp;
+  }
+
+  const inAppPath = path.join(app.getAppPath(), 'standalone');
+  if (fs.existsSync(inAppPath)) {
+    return inAppPath;
+  }
+
   return path.join(app.getAppPath(), '.next', 'standalone');
 }
 
-function checkServerReady(port, timeout = 20000) {
+function checkServerReady(port, timeout = 25000, getStatus = null) {
   const startTime = Date.now();
   return new Promise((resolve, reject) => {
     const check = () => {
+      if (getStatus) {
+        const { serverExited, exitCode, serverLogs } = getStatus();
+        if (serverExited) {
+          const detail = serverLogs.join('').trim() || 'No logs captured from server process.';
+          return reject(new Error(`Next.js server crashed during startup (Exit code: ${exitCode}).\n\nError details:\n${detail}`));
+        }
+      }
+
       const req = http.get(`http://127.0.0.1:${port}/api/local/courses`, (res) => {
         resolve(true);
       });
+
       req.on('error', () => {
         if (Date.now() - startTime > timeout) {
-          reject(new Error(`Timed out waiting for CoursePlex local server on port ${port}`));
+          const logs = getStatus ? getStatus().serverLogs.join('').trim() : '';
+          reject(new Error(`Timed out waiting for CoursePlex local server on port ${port}.\n\nServer process logs:\n${logs || 'No output detected.'}`));
         } else {
           setTimeout(check, 350);
         }
       });
+
       req.setTimeout(1000, () => {
         req.destroy();
       });
+
       req.end();
     };
     check();
@@ -87,45 +111,82 @@ async function startProductionServer() {
   const standaloneDir = getStandaloneDir();
   const serverPath = path.join(standaloneDir, 'server.js');
 
-  console.log('[Main] Looking for Next.js standalone at:', serverPath);
+  console.log('[Main] Looking for Next.js standalone server at:', serverPath);
 
   if (!fs.existsSync(serverPath)) {
-    throw new Error(`Next.js standalone server not found at: ${serverPath}`);
+    const dirContent = fs.existsSync(standaloneDir) ? fs.readdirSync(standaloneDir).join(', ') : 'Directory does not exist';
+    throw new Error(`Next.js standalone server not found at: ${serverPath}\nDir contents: [${dirContent}]`);
   }
 
   activePort = 38420;
 
-  // Use process.execPath with ELECTRON_RUN_AS_NODE=1 to run server.js with embedded Node
-  serverProcess = spawn(process.execPath, [serverPath], {
-    cwd: standaloneDir,
-    env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: '1',
-      PORT: activePort.toString(),
-      HOSTNAME: '127.0.0.1',
-      NODE_ENV: 'production',
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const serverLogs = [];
+  let serverExited = false;
+  let exitCode = null;
 
-  serverProcess.stdout?.on('data', (d) => {
-    console.log(`[Next.js stdout]: ${d.toString().trim()}`);
-  });
+  const handleOutput = (chunk, isErr = false) => {
+    const text = chunk.toString();
+    serverLogs.push(isErr ? `[STDERR] ${text}` : text);
+    if (serverLogs.length > 80) serverLogs.shift();
+    if (isErr) {
+      console.error('[Server Output]:', text.trim());
+    } else {
+      console.log('[Server Output]:', text.trim());
+    }
+  };
 
-  serverProcess.stderr?.on('data', (d) => {
-    console.error(`[Next.js stderr]: ${d.toString().trim()}`);
-  });
+  // Launch background server
+  try {
+    if (utilityProcess && typeof utilityProcess.fork === 'function') {
+      console.log('[Main] Starting background Next.js server via utilityProcess...');
+      serverProcess = utilityProcess.fork(serverPath, [], {
+        cwd: standaloneDir,
+        env: {
+          ...process.env,
+          PORT: activePort.toString(),
+          HOSTNAME: '127.0.0.1',
+          NODE_ENV: 'production',
+        },
+        stdio: 'pipe',
+      });
 
-  serverProcess.on('error', (err) => {
-    console.error('[Next.js server process error]:', err);
-  });
+      serverProcess.stdout?.on('data', (d) => handleOutput(d, false));
+      serverProcess.stderr?.on('data', (d) => handleOutput(d, true));
 
-  serverProcess.on('exit', (code, signal) => {
-    console.warn(`[Next.js server exited]: code=${code}, signal=${signal}`);
-  });
+      serverProcess.on('exit', (code) => {
+        console.warn(`[Main] Server process exited with code ${code}`);
+        serverExited = true;
+        exitCode = code;
+      });
+    } else {
+      throw new Error('utilityProcess not supported');
+    }
+  } catch (launchErr) {
+    console.log('[Main] Falling back to child_process.spawn...', launchErr.message);
+    serverProcess = spawn(process.execPath, [serverPath], {
+      cwd: standaloneDir,
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
+        PORT: activePort.toString(),
+        HOSTNAME: '127.0.0.1',
+        NODE_ENV: 'production',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
-  await checkServerReady(activePort, 20000);
-  console.log('[Main] Next.js backend server successfully started on port:', activePort);
+    serverProcess.stdout?.on('data', (d) => handleOutput(d, false));
+    serverProcess.stderr?.on('data', (d) => handleOutput(d, true));
+
+    serverProcess.on('exit', (code) => {
+      console.warn(`[Main] Spawned server process exited with code ${code}`);
+      serverExited = true;
+      exitCode = code;
+    });
+  }
+
+  await checkServerReady(activePort, 25000, () => ({ serverExited, exitCode, serverLogs }));
+  console.log('[Main] Next.js backend server successfully listening on port:', activePort);
 }
 
 function createWindow() {
@@ -337,6 +398,7 @@ app.whenReady().then(async () => {
         'CoursePlex Server Launch Failed',
         `Could not start the background Next.js server:\n\n${err?.message || err}\n\nPlease try running CoursePlex again or report this error.`
       );
+      return;
     }
   } else {
     // In dev mode, probe for active dev server port
@@ -370,7 +432,9 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   if (serverProcess) {
-    serverProcess.kill();
+    try {
+      serverProcess.kill();
+    } catch (_) {}
     serverProcess = null;
   }
   if (process.platform !== 'darwin') {
@@ -380,7 +444,9 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   if (serverProcess) {
-    serverProcess.kill();
+    try {
+      serverProcess.kill();
+    } catch (_) {}
     serverProcess = null;
   }
 });
