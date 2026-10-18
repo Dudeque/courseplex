@@ -38,7 +38,7 @@ export function NotesStudio({
   onPauseVideo,
   presetTimestamp,
 }: NotesStudioProps) {
-  const { libraryState, addOrUpdateNote, deleteNote, exportCourseNotes } = useCourseStore();
+  const { libraryState, addOrUpdateNote, deleteNote, exportCourseNotes, isServerMode } = useCourseStore();
 
   const [activeTab, setActiveTab] = useState<'notes' | 'attachments'>('notes');
   const [noteContent, setNoteContent] = useState('');
@@ -134,6 +134,16 @@ export function NotesStudio({
   };
 
   const handleDownloadAttachment = async (attachment: ScannedAttachment) => {
+    if (isServerMode) {
+      const a = document.createElement('a');
+      a.href = `/api/local/attachment?path=${encodeURIComponent(attachment.relativePath)}&download=1`;
+      a.download = attachment.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return;
+    }
+
     const file = await resolveAttachmentFile(attachment);
     if (!file) {
       alert('Could not access this file. Please re-mount your course folder.');
@@ -151,14 +161,33 @@ export function NotesStudio({
 
   // Preview attachment handler
   const handleOpenPreview = async (attachment: ScannedAttachment) => {
+    const ext = attachment.name.split('.').pop()?.toLowerCase();
+    const isImage = ['jpg', 'jpeg', 'png', 'webp', 'svg', 'gif', 'bmp', 'avif'].includes(ext || '');
+
+    if (isServerMode) {
+      if (ext === 'pdf' || isImage) {
+        setPreviewUrl(`/api/local/attachment?path=${encodeURIComponent(attachment.relativePath)}`);
+        setPreviewAttachment(attachment);
+      } else if (['md', 'txt', 'js', 'ts', 'json', 'py', 'html', 'css', 'jsx', 'tsx', 'sql', 'sh', 'yaml', 'yml'].includes(ext || '')) {
+        try {
+          const res = await fetch(`/api/local/attachment?path=${encodeURIComponent(attachment.relativePath)}`);
+          const text = await res.text();
+          setPreviewTextContent(text);
+          setPreviewAttachment(attachment);
+        } catch (e) {
+          console.warn('Could not load text preview:', e);
+        }
+      } else {
+        handleDownloadAttachment(attachment);
+      }
+      return;
+    }
+
     const file = await resolveAttachmentFile(attachment);
     if (!file) {
       alert('Could not access this file. Please re-mount your course folder.');
       return;
     }
-
-    const ext = attachment.name.split('.').pop()?.toLowerCase();
-    const isImage = ['jpg', 'jpeg', 'png', 'webp', 'svg', 'gif', 'bmp', 'avif'].includes(ext || '');
 
     if (ext === 'pdf' || isImage) {
       const url = URL.createObjectURL(file);
@@ -176,7 +205,9 @@ export function NotesStudio({
 
   const closePreview = () => {
     if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
+      if (previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(previewUrl);
+      }
       setPreviewUrl(null);
     }
     setPreviewTextContent(null);

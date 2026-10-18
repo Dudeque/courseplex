@@ -39,6 +39,15 @@ interface CourseStoreState {
   scanStatus: string;
   isInitialized: boolean;
 
+  // Local Server Streaming Mode
+  isServerMode: boolean;
+  serverCoursesDir: string | null;
+  isFolderModalOpen: boolean;
+  setFolderModalOpen: (open: boolean) => void;
+  connectServerDirectory: (dirPath: string) => Promise<void>;
+  disconnectServerDirectory: () => Promise<void>;
+  rescanServerDirectory: () => Promise<void>;
+
   libraryState: CourseLibraryState;
   scannedCourses: ScannedCourse[];
   scannedClusters: ScannedCluster[];
@@ -143,13 +152,30 @@ function serializeCoursesForCache(courses: ScannedCourse[]): ScannedCourse[] {
 function scheduleDiskSync(
   rootDirHandle: FileSystemDirectoryHandle | null,
   state: CourseLibraryState,
-  isDemoMode: boolean
+  isDemoMode: boolean,
+  isServerMode: boolean = false
 ) {
   if (isDemoMode) return;
   // Always persist state immediately to IndexedDB
   setIdb(LIBRARY_STATE_CACHE_KEY, state).catch((e) =>
     console.warn('Background IDB cache error:', e)
   );
+
+  if (isServerMode) {
+    if (syncTimeout) clearTimeout(syncTimeout);
+    syncTimeout = setTimeout(async () => {
+      try {
+        await fetch('/api/local/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ state }),
+        });
+      } catch (err) {
+        console.warn('Background server state sync error:', err);
+      }
+    }, 1500);
+    return;
+  }
 
   if (!rootDirHandle) return;
   if (syncTimeout) clearTimeout(syncTimeout);
@@ -171,6 +197,12 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
   isScanning: false,
   scanStatus: '',
   isInitialized: false,
+
+  // Local Server Streaming Mode
+  isServerMode: false,
+  serverCoursesDir: null,
+  isFolderModalOpen: false,
+  setFolderModalOpen: (open: boolean) => set({ isFolderModalOpen: open }),
 
   libraryState: createDefaultLibraryState(),
   scannedCourses: [],
@@ -201,7 +233,60 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
       }
     }
 
-    // 1. Restore cached state & course metadata from IndexedDB
+    // 1. Check if Local Server Streaming mode is configured
+    try {
+      const serverRes = await fetch('/api/local/courses');
+      if (serverRes.ok) {
+        const data = await serverRes.json();
+        if (data.configured && data.courses && data.courses.length > 0) {
+          const dirName = data.coursesDir
+            ? data.coursesDir.split(/[\\/]/).filter(Boolean).pop() || data.coursesDir
+            : 'Local Courses';
+
+          set({
+            isServerMode: true,
+            serverCoursesDir: data.coursesDir,
+            rootDirName: dirName,
+            scannedCourses: data.courses,
+            scannedClusters: data.clusters || [],
+            libraryState: data.libraryState || createDefaultLibraryState(),
+            permissionGranted: true,
+            isInitialized: true,
+          });
+
+          // Hydrate durations in background
+          for (const course of data.courses) {
+            for (const mod of course.modules) {
+              for (const lesson of mod.lessons) {
+                if (lesson.durationSeconds === 0) {
+                  const mediaUrl = `/api/local/media?path=${encodeURIComponent(lesson.relativePath)}`;
+                  durationHydrator.getCachedDuration(lesson.relativePath, mediaUrl).then((cached) => {
+                    if (cached) {
+                      lesson.durationSeconds = cached;
+                      set((s) => ({ scannedCourses: [...s.scannedCourses] }));
+                    } else {
+                      durationHydrator.enqueue({
+                        relativePath: lesson.relativePath,
+                        source: mediaUrl,
+                        onResolved: (dur) => {
+                          lesson.durationSeconds = dur;
+                          set((s) => ({ scannedCourses: [...s.scannedCourses] }));
+                        },
+                      });
+                    }
+                  });
+                }
+              }
+            }
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('Could not check server courses API:', e);
+    }
+
+    // 2. Restore cached state & course metadata from IndexedDB
     try {
       const cachedState = await getIdb<CourseLibraryState>(LIBRARY_STATE_CACHE_KEY);
       const cachedCourses = await getIdb<ScannedCourse[]>(SCANNED_COURSES_CACHE_KEY);
@@ -222,7 +307,7 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
       console.warn('Could not restore cached library from IndexedDB:', err);
     }
 
-    // 2. Check for FileSystemDirectoryHandle and query its permission
+    // 3. Check for FileSystemDirectoryHandle and query its permission
     try {
       const { handle, name, permissionState } = await getSavedRootDirectory();
       if (handle) {
@@ -348,6 +433,102 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
       rootDirName: null,
       permissionGranted: false,
       isDemoMode: false,
+      scannedCourses: [],
+      scannedClusters: [],
+      activeCourse: null,
+      activeLesson: null,
+      activeVideoUrl: null,
+      activeSubtitleUrl: null,
+      libraryState: createDefaultLibraryState(),
+    });
+  },
+
+  connectServerDirectory: async (dirPath: string) => {
+    set({ isScanning: true, scanStatus: 'Connecting local server directory...' });
+    try {
+      const res = await fetch('/api/local/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coursesDir: dirPath }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to connect server directory');
+      }
+
+      await get().rescanServerDirectory();
+    } catch (err) {
+      set({ isScanning: false, scanStatus: '' });
+      throw err;
+    }
+  },
+
+  rescanServerDirectory: async () => {
+    set({ isScanning: true, scanStatus: 'Scanning courses on server disk...' });
+    try {
+      const res = await fetch('/api/local/courses');
+      if (!res.ok) throw new Error('Failed to scan server courses');
+      const data = await res.json();
+
+      const dirName = data.coursesDir
+        ? data.coursesDir.split(/[\\/]/).filter(Boolean).pop() || data.coursesDir
+        : 'Local Courses';
+
+      set({
+        isServerMode: true,
+        serverCoursesDir: data.coursesDir,
+        rootDirName: dirName,
+        scannedCourses: data.courses,
+        scannedClusters: data.clusters || [],
+        libraryState: data.libraryState || get().libraryState,
+        permissionGranted: true,
+        isScanning: false,
+        scanStatus: '',
+        isInitialized: true,
+      });
+
+      // Hydrate durations in background
+      for (const course of data.courses) {
+        for (const mod of course.modules) {
+          for (const lesson of mod.lessons) {
+            if (lesson.durationSeconds === 0) {
+              const mediaUrl = `/api/local/media?path=${encodeURIComponent(lesson.relativePath)}`;
+              durationHydrator.getCachedDuration(lesson.relativePath, mediaUrl).then((cached) => {
+                if (cached) {
+                  lesson.durationSeconds = cached;
+                  set((s) => ({ scannedCourses: [...s.scannedCourses] }));
+                } else {
+                  durationHydrator.enqueue({
+                    relativePath: lesson.relativePath,
+                    source: mediaUrl,
+                    onResolved: (dur) => {
+                      lesson.durationSeconds = dur;
+                      set((s) => ({ scannedCourses: [...s.scannedCourses] }));
+                    },
+                  });
+                }
+              });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      set({ isScanning: false, scanStatus: '' });
+      throw err;
+    }
+  },
+
+  disconnectServerDirectory: async () => {
+    try {
+      await fetch('/api/local/config', { method: 'DELETE' });
+    } catch (e) {
+      console.warn('Could not clear server directory config:', e);
+    }
+    set({
+      isServerMode: false,
+      serverCoursesDir: null,
+      rootDirName: null,
+      permissionGranted: false,
       scannedCourses: [],
       scannedClusters: [],
       activeCourse: null,
@@ -535,7 +716,7 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
     };
 
     set({ libraryState: updatedState });
-    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode);
+    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode, get().isServerMode);
   },
 
   selectLesson: async (lesson: ScannedLesson) => {
@@ -544,7 +725,12 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
     let videoUrl: string | null = null;
     let subtitleUrl: string | null = null;
 
-    if (lesson.videoFile) {
+    if (get().isServerMode) {
+      videoUrl = `/api/local/media?path=${encodeURIComponent(lesson.relativePath)}`;
+      if (lesson.subtitleFiles && lesson.subtitleFiles.length > 0 && lesson.subtitleFiles[0].relativePath) {
+        subtitleUrl = `/api/local/subtitles?path=${encodeURIComponent(lesson.subtitleFiles[0].relativePath)}`;
+      }
+    } else if (lesson.videoFile) {
       videoUrl = URL.createObjectURL(lesson.videoFile);
     } else if (get().isDemoMode) {
       // Demo mock video
@@ -571,7 +757,7 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
       await triggerMountDirectory();
     }
 
-    if (lesson.subtitleFiles && lesson.subtitleFiles.length > 0) {
+    if (!get().isServerMode && lesson.subtitleFiles && lesson.subtitleFiles.length > 0) {
       const primarySub = lesson.subtitleFiles[0];
       if (primarySub.file) {
         const { createVttBlobUrlFromSrtFile } = await import('@/lib/subtitles');
@@ -617,7 +803,7 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
     };
 
     set({ libraryState: updatedState });
-    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode);
+    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode, get().isServerMode);
   },
 
   clearActiveLessonMedia: () => {
@@ -694,7 +880,7 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
     };
 
     set({ libraryState: updatedState });
-    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode);
+    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode, get().isServerMode);
   },
 
   toggleLessonCompleted: (coursePath: string, lessonPath: string) => {
@@ -721,7 +907,7 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
     };
 
     set({ libraryState: updatedState });
-    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode);
+    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode, get().isServerMode);
   },
 
   addOrUpdateNote: (noteData) => {
@@ -765,7 +951,7 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
     };
 
     set({ libraryState: updatedState });
-    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode);
+    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode, get().isServerMode);
   },
 
   deleteNote: (noteId: string, lessonPath: string) => {
@@ -781,7 +967,7 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
     };
 
     set({ libraryState: updatedState });
-    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode);
+    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode, get().isServerMode);
   },
 
   toggleFavoriteCourse: (coursePath: string) => {
@@ -806,7 +992,7 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
     };
 
     set({ libraryState: updatedState });
-    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode);
+    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode, get().isServerMode);
   },
 
   setCourseCluster: (coursePath: string, clusterId: string) => {
@@ -835,7 +1021,7 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
     };
 
     set({ libraryState: updatedState });
-    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode);
+    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode, get().isServerMode);
   },
 
   createCluster: (name: string, color: string, description?: string) => {
@@ -857,7 +1043,7 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
     };
 
     set({ libraryState: updatedState });
-    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode);
+    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode, get().isServerMode);
     return id;
   },
 
@@ -909,7 +1095,7 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
     };
 
     set({ libraryState: updatedState });
-    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode);
+    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode, get().isServerMode);
   },
 
   setDailyGoalMinutes: (minutes: number) => {
@@ -918,7 +1104,7 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
       dailyGoalMinutes: minutes,
     };
     set({ libraryState: updatedState });
-    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode);
+    scheduleDiskSync(get().rootDirHandle, updatedState, get().isDemoMode, get().isServerMode);
   },
 
   exportCourseNotes: async (coursePath: string) => {

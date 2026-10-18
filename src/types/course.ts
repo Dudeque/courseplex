@@ -84,7 +84,7 @@ export interface ScannedLesson {
   durationSeconds: number;
   videoFile?: File;
   videoHandle?: FileSystemFileHandle;
-  subtitleFiles?: { name: string; lang: string; file?: File; handle?: FileSystemFileHandle }[];
+  subtitleFiles?: { name: string; lang: string; relativePath?: string; file?: File; handle?: FileSystemFileHandle }[];
   noteFile?: File;
   noteHandle?: FileSystemFileHandle;
   attachments: ScannedAttachment[];

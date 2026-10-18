@@ -2,7 +2,8 @@ import { get, set } from 'idb-keyval';
 
 interface DurationTask {
   relativePath: string;
-  file: File;
+  source?: File | string;
+  file?: File;
   onResolved: (durationSeconds: number) => void;
 }
 
@@ -11,13 +12,16 @@ class DurationHydratorQueue {
   private activeCount = 0;
   private readonly maxConcurrency = 3;
 
-  private getCacheKey(relativePath: string, file: File): string {
-    return `courseplex_dur_${relativePath}_${file.lastModified}_${file.size}`;
+  private getCacheKey(relativePath: string, source: File | string): string {
+    if (typeof source === 'string') {
+      return `courseplex_dur_${relativePath}`;
+    }
+    return `courseplex_dur_${relativePath}_${source.lastModified}_${source.size}`;
   }
 
-  public async getCachedDuration(relativePath: string, file: File): Promise<number | null> {
+  public async getCachedDuration(relativePath: string, source: File | string): Promise<number | null> {
     try {
-      const key = this.getCacheKey(relativePath, file);
+      const key = this.getCacheKey(relativePath, source);
       const cached = await get<number>(key);
       if (typeof cached === 'number' && !isNaN(cached) && cached > 0) {
         return cached;
@@ -43,11 +47,18 @@ class DurationHydratorQueue {
 
     this.activeCount++;
 
-    this.extractVideoDuration(task.file)
+    const src = task.source || task.file;
+    if (!src) {
+      this.activeCount--;
+      this.processNext();
+      return;
+    }
+
+    this.extractVideoDuration(src)
       .then(async (duration) => {
         if (duration > 0) {
           try {
-            await set(this.getCacheKey(task.relativePath, task.file), duration);
+            await set(this.getCacheKey(task.relativePath, src), duration);
           } catch (err) {
             console.warn('Could not cache duration to IDB:', err);
           }
@@ -63,7 +74,7 @@ class DurationHydratorQueue {
       });
   }
 
-  private extractVideoDuration(file: File): Promise<number> {
+  private extractVideoDuration(source: File | string): Promise<number> {
     return new Promise((resolve) => {
       if (typeof window === 'undefined') {
         resolve(0);
@@ -75,13 +86,16 @@ class DurationHydratorQueue {
       video.muted = true;
       video.playsInline = true;
 
-      const objectUrl = URL.createObjectURL(file);
-      video.src = objectUrl;
+      const isUrl = typeof source === 'string';
+      const videoSrc = isUrl ? source : URL.createObjectURL(source);
+      video.src = videoSrc;
 
       const cleanup = () => {
         video.onloadedmetadata = null;
         video.onerror = null;
-        URL.revokeObjectURL(objectUrl);
+        if (!isUrl) {
+          URL.revokeObjectURL(videoSrc);
+        }
         video.remove();
       };
 

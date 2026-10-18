@@ -25,6 +25,8 @@ export default function HomePage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const {
+    isServerMode,
+    setFolderModalOpen,
     rootDirHandle,
     rootDirName,
     permissionGranted,
@@ -152,19 +154,28 @@ export default function HomePage() {
 
             <div className="flex flex-wrap items-center gap-3 pt-4">
               <button
-                onClick={() => triggerMountDirectory()}
+                onClick={() => setFolderModalOpen(true)}
                 className="px-6 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/30 transition-all flex items-center gap-2 hover:scale-105 cursor-pointer"
               >
                 <HardDrive className="w-4 h-4" />
-                <span>Mount Local Courses Folder</span>
+                <span>Connect Server Folder (Recommended)</span>
+              </button>
+
+              <button
+                onClick={() => triggerMountDirectory()}
+                className="px-5 py-3.5 rounded-2xl bg-white/10 hover:bg-white/15 text-white font-semibold text-sm border border-white/10 transition-all flex items-center gap-2 cursor-pointer"
+                title="Mount via browser File System Access API"
+              >
+                <FolderSync className="w-4 h-4" />
+                <span>Mount via Browser</span>
               </button>
 
               <button
                 onClick={() => loadDemoMode()}
-                className="px-6 py-3.5 rounded-2xl bg-white/10 hover:bg-white/15 text-white font-semibold text-sm border border-white/10 transition-all flex items-center gap-2 cursor-pointer"
+                className="px-4 py-3.5 rounded-2xl bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white font-medium text-xs border border-white/5 transition-all flex items-center gap-1.5 cursor-pointer"
               >
-                <Sparkles className="w-4 h-4 text-purple-400" />
-                <span>Explore Demo Library</span>
+                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                <span>Try Demo Library</span>
               </button>
 
               <button
@@ -173,7 +184,7 @@ export default function HomePage() {
                 title="Browser directory fallback for Safari/Firefox"
               >
                 <Upload className="w-4 h-4" />
-                <span>Select Folder (Fallback)</span>
+                <span>Folder Upload (Fallback)</span>
               </button>
             </div>
           </div>
@@ -181,7 +192,7 @@ export default function HomePage() {
       ) : null}
 
       {/* Permission Re-authentication / Re-mount Banner (when courses exist in cache but permissions need gesture) */}
-      {!permissionGranted && !isDemoMode && scannedCourses.length > 0 ? (
+      {!isServerMode && !permissionGranted && !isDemoMode && scannedCourses.length > 0 ? (
         <div className="p-6 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="space-y-1">
             <h3 className="font-bold text-amber-200 text-base flex items-center gap-2">
@@ -194,13 +205,20 @@ export default function HomePage() {
                 : `Showing cached courses for "${rootDirName || 'your library'}". Click Re-mount Folder to stream videos directly.`}
             </p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
               onClick={() => (rootDirHandle ? reconnectDirectory() : triggerMountDirectory())}
-              className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-lg shadow-amber-500/20 transition-all flex items-center gap-1.5 cursor-pointer"
+              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-lg shadow-amber-500/20 transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <FolderSync className="w-4 h-4" />
               <span>{rootDirHandle ? 'Reconnect Disk Access' : 'Re-mount Folder'}</span>
+            </button>
+            <button
+              onClick={() => setFolderModalOpen(true)}
+              className="px-4 py-2 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/40 text-indigo-200 font-semibold text-xs border border-indigo-500/30 transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <HardDrive className="w-3.5 h-3.5" />
+              <span>Switch to Server Folder</span>
             </button>
           </div>
         </div>
