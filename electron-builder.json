@@ -6,6 +6,13 @@
   "directories": {
     "output": "dist-electron"
   },
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "Dudeque",
+      "repo": "courseplex"
+    }
+  ],
   "files": [
     "electron/**/*",
     ".next/standalone/**/*",

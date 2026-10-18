@@ -133,6 +133,50 @@ function createWindow() {
         { role: 'togglefullscreen' },
       ],
     },
+    {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'Check for Updates...',
+          click: async () => {
+            if (!app.isPackaged) {
+              dialog.showMessageBox(mainWindow, {
+                type: 'info',
+                title: 'Check for Updates',
+                message: 'Auto-updates are active in the packaged app.',
+                detail: `Current development version: ${app.getVersion()}`,
+              });
+              return;
+            }
+            try {
+              const { autoUpdater } = require('electron-updater');
+              const res = await autoUpdater.checkForUpdates();
+              if (!res || !res.updateInfo || res.updateInfo.version === app.getVersion()) {
+                dialog.showMessageBox(mainWindow, {
+                  type: 'info',
+                  title: 'CoursePlex is Up to Date',
+                  message: `You are running the latest version (${app.getVersion()}).`,
+                });
+              }
+            } catch (err) {
+              dialog.showErrorBox('Update Check Failed', err ? err.message : 'Unknown error');
+            }
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'About CoursePlex',
+          click: () => {
+            dialog.showMessageBox(mainWindow, {
+              type: 'info',
+              title: 'About CoursePlex',
+              message: `CoursePlex Desktop v${app.getVersion()}`,
+              detail: 'Personal Netflix & Plex for local video courses.\nZero-cloud architecture • 100% Local.',
+            });
+          },
+        },
+      ],
+    },
   ];
 
   const menu = Menu.buildFromTemplate(template);
@@ -146,6 +190,32 @@ function createWindow() {
   });
 }
 
+function setupAutoUpdater() {
+  const { autoUpdater } = require('electron-updater');
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-downloaded', (info) => {
+    if (!mainWindow) return;
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      buttons: ['Restart Now', 'Later'],
+      defaultId: 0,
+      title: 'Update Ready - CoursePlex',
+      message: `A new version of CoursePlex (${info.version}) has been downloaded!`,
+      detail: 'Restart CoursePlex now to complete the update.',
+    }).then((res) => {
+      if (res.response === 0) {
+        autoUpdater.quitAndInstall();
+      }
+    });
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.warn('Auto-updater background check:', err ? err.message : err);
+  });
+}
+
 app.whenReady().then(async () => {
   if (app.isPackaged) {
     try {
@@ -156,6 +226,14 @@ app.whenReady().then(async () => {
   }
 
   createWindow();
+
+  if (app.isPackaged) {
+    setupAutoUpdater();
+    const { autoUpdater } = require('electron-updater');
+    setTimeout(() => {
+      autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+    }, 4000);
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
