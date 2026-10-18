@@ -2,13 +2,11 @@
 
 import React, { useState, useRef, useSyncExternalStore } from 'react';
 import {
-  isPasscodeConfigured,
   isDeviceAuthenticated,
   verifyPasscode,
-  setInitialPasscode,
   authenticateDevice,
 } from '@/lib/security';
-import { Lock, ShieldCheck, ArrowRight, AlertCircle } from 'lucide-react';
+import { Lock, ArrowRight, AlertCircle, KeyRound } from 'lucide-react';
 
 interface PasscodeLockProps {
   children: React.ReactNode;
@@ -25,23 +23,16 @@ function subscribeAuth(callback: () => void) {
 }
 
 export function PasscodeLock({ children }: PasscodeLockProps) {
-  const isConfigured = useSyncExternalStore(
-    subscribeAuth,
-    () => isPasscodeConfigured(),
-    () => true
-  );
-
   const isAuthenticated = useSyncExternalStore(
     subscribeAuth,
     () => isDeviceAuthenticated(),
     () => true
   );
 
-  // Form states
   const [passcode, setPasscode] = useState('');
-  const [confirmPasscode, setConfirmPasscode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isShaking, setIsShaking] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -52,50 +43,33 @@ export function PasscodeLock({ children }: PasscodeLockProps) {
 
   const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!passcode) return;
+    if (!passcode || isSubmitting) return;
 
+    setIsSubmitting(true);
     setError(null);
+
     const valid = await verifyPasscode(passcode);
     if (valid) {
       authenticateDevice();
       window.dispatchEvent(new CustomEvent('courseplex-lock-app'));
       setPasscode('');
     } else {
-      setError('Incorrect passcode. Please try again.');
+      setError('Access denied. Incorrect passcode.');
       triggerShake();
       setPasscode('');
       inputRef.current?.focus();
     }
+    setIsSubmitting(false);
   };
 
-  const handleSetup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!passcode) return;
-
-    if (passcode.length < 4) {
-      setError('Passcode must be at least 4 characters.');
-      triggerShake();
-      return;
-    }
-
-    if (passcode !== confirmPasscode) {
-      setError('Passcodes do not match.');
-      triggerShake();
-      return;
-    }
-
-    await setInitialPasscode(passcode);
-    window.dispatchEvent(new CustomEvent('courseplex-lock-app'));
-  };
-
-  // Already authenticated: render app
-  if (isConfigured && isAuthenticated) {
+  // Already authenticated on this device
+  if (isAuthenticated) {
     return <>{children}</>;
   }
 
   return (
     <div className="fixed inset-0 z-50 bg-[#090a0f] flex flex-col items-center justify-center p-4 antialiased">
-      {/* Background Ambient Glow */}
+      {/* Ambient Cinema Lighting */}
       <div className="absolute w-96 h-96 bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />
 
       <div
@@ -103,7 +77,7 @@ export function PasscodeLock({ children }: PasscodeLockProps) {
           isShaking ? 'animate-shake' : ''
         }`}
       >
-        {/* Brand Icon */}
+        {/* Lock Icon */}
         <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center shadow-xl shadow-indigo-600/30 mb-6">
           <Lock className="w-8 h-8 text-white" />
         </div>
@@ -116,9 +90,7 @@ export function PasscodeLock({ children }: PasscodeLockProps) {
             </span>
           </h1>
           <p className="text-xs text-gray-400">
-            {!isConfigured
-              ? 'Set a master passcode to protect your local course cinema.'
-              : 'Enter your passcode to unlock CoursePlex on this device.'}
+            Private Course Cinema. Enter the master passcode to unlock.
           </p>
         </div>
 
@@ -129,58 +101,29 @@ export function PasscodeLock({ children }: PasscodeLockProps) {
           </div>
         )}
 
-        {/* Setup Mode vs Unlock Mode */}
-        {!isConfigured ? (
-          <form onSubmit={handleSetup} className="w-full space-y-3">
+        <form onSubmit={handleUnlock} className="w-full space-y-4">
+          <div className="relative">
+            <KeyRound className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500" />
             <input
               ref={inputRef}
               type="password"
-              placeholder="Enter new passcode (min. 4 chars)"
+              placeholder="Enter passcode..."
               value={passcode}
               onChange={(e) => setPasscode(e.target.value)}
-              className="w-full bg-[#161a2c] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 text-center tracking-widest font-mono"
+              className="w-full bg-[#161a2c] border border-white/10 rounded-xl pl-10 pr-4 py-3.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 tracking-wider font-mono"
               autoFocus
             />
-            <input
-              type="password"
-              placeholder="Confirm passcode"
-              value={confirmPasscode}
-              onChange={(e) => setConfirmPasscode(e.target.value)}
-              className="w-full bg-[#161a2c] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 text-center tracking-widest font-mono"
-            />
-            <button
-              type="submit"
-              disabled={!passcode || !confirmPasscode}
-              className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2"
-            >
-              <span>Save &amp; Unlock</span>
-              <ShieldCheck className="w-4 h-4" />
-            </button>
-            <p className="text-[11px] text-gray-500 pt-1">
-              Tip: You can also define <code className="text-indigo-400">NEXT_PUBLIC_APP_PASSCODE</code> in Vercel environment variables.
-            </p>
-          </form>
-        ) : (
-          <form onSubmit={handleUnlock} className="w-full space-y-4">
-            <input
-              ref={inputRef}
-              type="password"
-              placeholder="••••••••"
-              value={passcode}
-              onChange={(e) => setPasscode(e.target.value)}
-              className="w-full bg-[#161a2c] border border-white/10 rounded-xl px-4 py-3.5 text-base text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 text-center tracking-widest font-mono"
-              autoFocus
-            />
-            <button
-              type="submit"
-              disabled={!passcode}
-              className="w-full py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-bold text-xs shadow-xl shadow-indigo-600/30 transition-all flex items-center justify-center gap-2"
-            >
-              <span>Unlock Cinema</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </form>
-        )}
+          </div>
+
+          <button
+            type="submit"
+            disabled={!passcode || isSubmitting}
+            className="w-full py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-bold text-xs shadow-xl shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <span>{isSubmitting ? 'Verifying...' : 'Unlock Cinema'}</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        </form>
       </div>
     </div>
   );

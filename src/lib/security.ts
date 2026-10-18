@@ -1,5 +1,7 @@
-const PASSCODE_HASH_KEY = 'courseplex_passcode_hash';
 const AUTH_TOKEN_KEY = 'courseplex_auth_session';
+
+// Pre-computed SHA-256 hash of master passcode 'fpa2bvwa'
+const DEFAULT_PASSCODE_HASH = '8be1a77a3547ac80acbe6795436292a4e492d765e8eb4a729e1f073b2575c5c6';
 
 export async function hashString(input: string): Promise<string> {
   const encoder = new TextEncoder();
@@ -13,31 +15,14 @@ export function getEnvPasscode(): string | null {
   return process.env.NEXT_PUBLIC_APP_PASSCODE || null;
 }
 
-export function isPasscodeConfigured(): boolean {
-  if (typeof window === 'undefined') return true;
-  if (getEnvPasscode()) return true;
-  return !!localStorage.getItem(PASSCODE_HASH_KEY);
-}
-
-export async function setInitialPasscode(passcode: string): Promise<void> {
-  if (typeof window === 'undefined') return;
-  const hash = await hashString(passcode);
-  localStorage.setItem(PASSCODE_HASH_KEY, hash);
-  authenticateDevice();
-}
-
 export async function verifyPasscode(passcode: string): Promise<boolean> {
   const envPass = getEnvPasscode();
   if (envPass) {
     return passcode === envPass;
   }
 
-  if (typeof window === 'undefined') return false;
-  const storedHash = localStorage.getItem(PASSCODE_HASH_KEY);
-  if (!storedHash) return false;
-
   const inputHash = await hashString(passcode);
-  return inputHash === storedHash;
+  return inputHash === DEFAULT_PASSCODE_HASH;
 }
 
 export function isDeviceAuthenticated(): boolean {
@@ -52,11 +37,5 @@ export function authenticateDevice(): void {
 
 export function lockDevice(): void {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem(AUTH_TOKEN_KEY);
-}
-
-export function resetPasscode(): void {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(PASSCODE_HASH_KEY);
   localStorage.removeItem(AUTH_TOKEN_KEY);
 }
