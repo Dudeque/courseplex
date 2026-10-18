@@ -176,6 +176,11 @@ export function CurriculumSidebar({
                               PDF
                             </span>
                           )}
+                          {lesson.attachments.some((a) => a.type === 'image') && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-bold">
+                              IMG
+                            </span>
+                          )}
                           {lesson.attachments.some((a) => a.type === 'zip' || a.type === 'code') && (
                             <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
                               CODE

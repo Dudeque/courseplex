@@ -65,7 +65,7 @@ export interface StudySession {
 // Runtime Scanned File Tree Types
 export interface ScannedAttachment {
   name: string;
-  type: 'pdf' | 'zip' | 'code' | 'doc' | 'other';
+  type: 'pdf' | 'zip' | 'code' | 'doc' | 'image' | 'other';
   relativePath: string;
   file?: File;
   handle?: FileSystemFileHandle;

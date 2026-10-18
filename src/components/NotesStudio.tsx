@@ -20,6 +20,7 @@ import {
   X,
   FileCode,
   FileArchive,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 interface NotesStudioProps {
@@ -157,7 +158,9 @@ export function NotesStudio({
     }
 
     const ext = attachment.name.split('.').pop()?.toLowerCase();
-    if (ext === 'pdf') {
+    const isImage = ['jpg', 'jpeg', 'png', 'webp', 'svg', 'gif', 'bmp', 'avif'].includes(ext || '');
+
+    if (ext === 'pdf' || isImage) {
       const url = URL.createObjectURL(file);
       setPreviewUrl(url);
       setPreviewAttachment(attachment);
@@ -365,6 +368,7 @@ export function NotesStudio({
             lesson.attachments.map((att, idx) => {
               const isPdf = att.type === 'pdf';
               const isZip = att.type === 'zip';
+              const isImage = att.type === 'image';
 
               return (
                 <div
@@ -377,6 +381,8 @@ export function NotesStudio({
                         <FileText className="w-4 h-4 text-red-400" />
                       ) : isZip ? (
                         <FileArchive className="w-4 h-4 text-amber-400" />
+                      ) : isImage ? (
+                        <ImageIcon className="w-4 h-4 text-purple-400" />
                       ) : (
                         <FileCode className="w-4 h-4 text-emerald-400" />
                       )}
@@ -392,7 +398,7 @@ export function NotesStudio({
                   </div>
 
                   <div className="flex items-center gap-1.5">
-                    {['pdf', 'md', 'txt', 'js', 'ts', 'json', 'py', 'html', 'css', 'jsx', 'tsx', 'sql'].includes(
+                    {['pdf', 'jpg', 'jpeg', 'png', 'webp', 'svg', 'gif', 'bmp', 'avif', 'md', 'txt', 'js', 'ts', 'json', 'py', 'html', 'css', 'jsx', 'tsx', 'sql', 'sh', 'yaml', 'yml'].includes(
                       att.name.split('.').pop()?.toLowerCase() || ''
                     ) && (
                       <button
@@ -427,29 +433,56 @@ export function NotesStudio({
             {/* Modal Header */}
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/10 bg-[#0d101a]">
               <div className="flex items-center gap-2 min-w-0">
-                <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
+                {previewAttachment.type === 'image' ? (
+                  <ImageIcon className="w-4 h-4 text-purple-400 shrink-0" />
+                ) : previewAttachment.type === 'pdf' ? (
+                  <FileText className="w-4 h-4 text-red-400 shrink-0" />
+                ) : (
+                  <FileCode className="w-4 h-4 text-indigo-400 shrink-0" />
+                )}
                 <span className="text-sm font-bold text-white truncate">
                   {previewAttachment.name}
                 </span>
               </div>
-              <button
-                onClick={closePreview}
-                className="p-1 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleDownloadAttachment(previewAttachment)}
+                  className="px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 text-xs font-medium border border-indigo-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                  title="Save / Download file"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Save</span>
+                </button>
+                <button
+                  onClick={closePreview}
+                  className="p-1 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Modal Content */}
-            <div className="flex-1 overflow-auto p-4 bg-[#0a0c14]">
+            <div className="flex-1 overflow-auto p-4 bg-[#0a0c14] flex items-center justify-center">
               {previewUrl ? (
-                <iframe
-                  src={previewUrl}
-                  className="w-full h-full rounded-xl border border-white/5"
-                  title={previewAttachment.name}
-                />
+                previewAttachment.type === 'image' || ['jpg', 'jpeg', 'png', 'webp', 'svg', 'gif', 'bmp', 'avif'].includes(previewAttachment.name.split('.').pop()?.toLowerCase() || '') ? (
+                  <div className="w-full h-full flex items-center justify-center p-2 select-none">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={previewUrl}
+                      alt={previewAttachment.name}
+                      className="max-w-full max-h-full object-contain rounded-xl shadow-2xl"
+                    />
+                  </div>
+                ) : (
+                  <iframe
+                    src={previewUrl}
+                    className="w-full h-full rounded-xl border border-white/5"
+                    title={previewAttachment.name}
+                  />
+                )
               ) : previewTextContent !== null ? (
-                <div className="prose prose-invert prose-sm max-w-none p-4 font-mono text-xs whitespace-pre-wrap">
+                <div className="w-full h-full overflow-auto prose prose-invert prose-sm max-w-none p-4 font-mono text-xs whitespace-pre-wrap">
                   {previewTextContent}
                 </div>
               ) : (

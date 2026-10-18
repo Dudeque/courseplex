@@ -126,9 +126,10 @@ export function extractLessonNumber(str: string): number | null {
   return null;
 }
 
-export function getAttachmentType(filename: string): 'pdf' | 'zip' | 'code' | 'doc' | 'other' {
+export function getAttachmentType(filename: string): 'pdf' | 'zip' | 'code' | 'doc' | 'image' | 'other' {
   const ext = getFileExtension(filename);
   if (ext === 'pdf') return 'pdf';
+  if (['jpg', 'jpeg', 'png', 'webp', 'svg', 'gif', 'bmp', 'avif'].includes(ext)) return 'image';
   if (['zip', 'tar', 'gz', '7z', 'rar', 'tgz', 'bz2', 'xz'].includes(ext)) return 'zip';
   if (['ipynb', 'py', 'js', 'ts', 'jsx', 'tsx', 'html', 'css', 'json', 'sql', 'sh', 'bash', 'zsh', 'rs', 'go', 'java', 'c', 'cpp', 'h', 'hpp', 'cs', 'rb', 'php', 'swift', 'kt', 'yaml', 'yml', 'xml', 'toml', 'env'].includes(ext)) return 'code';
   if (['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'csv', 'txt', 'md', 'epub', 'rtf'].includes(ext)) return 'doc';
