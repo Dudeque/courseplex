@@ -107,27 +107,67 @@ export function NotesStudio({
     }
   };
 
+  // Resolve File object whether from in-memory File, FileSystemFileHandle, or rootDirHandle
+  const resolveAttachmentFile = async (attachment: ScannedAttachment): Promise<File | null> => {
+    if (attachment.file) return attachment.file;
+    if (attachment.handle) {
+      try {
+        return await attachment.handle.getFile();
+      } catch (e) {
+        console.warn('Could not read file from attachment handle:', e);
+      }
+    }
+    const rootHandle = useCourseStore.getState().rootDirHandle;
+    if (rootHandle) {
+      try {
+        const { getFileHandleByPath } = await import('@/lib/fs-handle');
+        const handle = await getFileHandleByPath(rootHandle, attachment.relativePath);
+        if (handle) {
+          return await handle.getFile();
+        }
+      } catch (e) {
+        console.warn('Could not resolve file by path:', e);
+      }
+    }
+    return null;
+  };
+
+  const handleDownloadAttachment = async (attachment: ScannedAttachment) => {
+    const file = await resolveAttachmentFile(attachment);
+    if (!file) {
+      alert('Could not access this file. Please re-mount your course folder.');
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = attachment.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   // Preview attachment handler
   const handleOpenPreview = async (attachment: ScannedAttachment) => {
-    if (attachment.file) {
-      const ext = attachment.name.split('.').pop()?.toLowerCase();
-      if (ext === 'pdf') {
-        const url = URL.createObjectURL(attachment.file);
-        setPreviewUrl(url);
-        setPreviewAttachment(attachment);
-      } else if (ext === 'md' || ext === 'txt' || ext === 'js' || ext === 'ts' || ext === 'json' || ext === 'py') {
-        const text = await attachment.file.text();
-        setPreviewTextContent(text);
-        setPreviewAttachment(attachment);
-      } else {
-        // Download directly
-        const url = URL.createObjectURL(attachment.file);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = attachment.name;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
+    const file = await resolveAttachmentFile(attachment);
+    if (!file) {
+      alert('Could not access this file. Please re-mount your course folder.');
+      return;
+    }
+
+    const ext = attachment.name.split('.').pop()?.toLowerCase();
+    if (ext === 'pdf') {
+      const url = URL.createObjectURL(file);
+      setPreviewUrl(url);
+      setPreviewAttachment(attachment);
+    } else if (['md', 'txt', 'js', 'ts', 'json', 'py', 'html', 'css', 'jsx', 'tsx', 'sql', 'sh', 'yaml', 'yml'].includes(ext || '')) {
+      const text = await file.text();
+      setPreviewTextContent(text);
+      setPreviewAttachment(attachment);
+    } else {
+      // Direct download for archives / non-previewable files
+      handleDownloadAttachment(attachment);
     }
   };
 
@@ -352,12 +392,25 @@ export function NotesStudio({
                   </div>
 
                   <div className="flex items-center gap-1.5">
+                    {['pdf', 'md', 'txt', 'js', 'ts', 'json', 'py', 'html', 'css', 'jsx', 'tsx', 'sql'].includes(
+                      att.name.split('.').pop()?.toLowerCase() || ''
+                    ) && (
+                      <button
+                        onClick={() => handleOpenPreview(att)}
+                        className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-medium transition-colors flex items-center gap-1 cursor-pointer"
+                        title="Preview document"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Preview</span>
+                      </button>
+                    )}
                     <button
-                      onClick={() => handleOpenPreview(att)}
-                      className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-medium transition-colors flex items-center gap-1"
+                      onClick={() => handleDownloadAttachment(att)}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 text-xs font-medium border border-indigo-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                      title="Save / Download file"
                     >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>Preview</span>
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Save</span>
                     </button>
                   </div>
                 </div>

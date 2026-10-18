@@ -12,7 +12,20 @@ const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'bas
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mkv', 'webm', 'mov', 'm4v']);
 const SUBTITLE_EXTENSIONS = new Set(['srt', 'vtt']);
 const NOTE_EXTENSIONS = new Set(['md', 'txt', 'html']);
-const ATTACHMENT_EXTENSIONS = new Set(['pdf', 'zip', 'ipynb', 'py', 'js', 'ts', 'jsx', 'tsx', 'tar', 'gz', 'json']);
+const ATTACHMENT_EXTENSIONS = new Set([
+  // Archives
+  'zip', 'tar', 'gz', '7z', 'rar', 'tgz', 'bz2', 'xz',
+  // Documents & Slides
+  'pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'csv', 'epub',
+  // Code & Notebooks
+  'ipynb', 'py', 'js', 'ts', 'jsx', 'tsx', 'html', 'css', 'json', 'sql',
+  'sh', 'bash', 'zsh', 'rs', 'go', 'java', 'c', 'cpp', 'h', 'hpp', 'cs',
+  'rb', 'php', 'swift', 'kt', 'yaml', 'yml', 'xml', 'toml', 'env',
+  // Text & Notes
+  'txt', 'md', 'rtf',
+  // Images (diagrams, cheatsheets, slides)
+  'png', 'jpg', 'jpeg', 'webp', 'svg',
+]);
 const COVER_NAMES = new Set([
   'cover.jpg', 'cover.jpeg', 'cover.png', 'cover.webp',
   'poster.jpg', 'poster.jpeg', 'poster.png', 'poster.webp',
@@ -67,6 +80,117 @@ export function getBaseStem(filename: string): string {
   // Remove language suffix if present for subtitles: e.g. "lesson-01.en" -> "lesson-01"
   base = base.replace(/\.(en|es|fr|de|pt|ru|zh|ja|ko)$/i, '');
   return base.toLowerCase().trim();
+}
+
+export function isResourceDirectoryName(dirName: string): boolean {
+  const lower = dirName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return (
+    lower.includes('resource') ||
+    lower.includes('attachment') ||
+    lower.includes('download') ||
+    lower.includes('exercise') ||
+    lower.includes('supplement') ||
+    lower === 'assets' ||
+    lower === 'code' ||
+    lower === 'sourcecode' ||
+    lower === 'projectfiles' ||
+    lower === 'files'
+  );
+}
+
+export function extractLessonNumber(str: string): number | null {
+  if (!str) return null;
+  const name = str.replace(/\.[a-zA-Z0-9]+$/, '').trim();
+
+  // 1. Explicit indicator: "lesson-01", "lesson_01", "lesson 1", "lecture-2", "video-3", "l04", "lec-5"
+  const explicitMatch = name.match(/\b(?:lesson|lecture|video|lec|les|l|item|step|part|chapter|ch)[\s._-]*(\d+)\b/i);
+  if (explicitMatch) {
+    const num = parseInt(explicitMatch[1], 10);
+    if (!isNaN(num)) return num;
+  }
+
+  // 2. Leading number: "01 - starter", "01_code", "01.project", "[01] code", "(01) notes", "01"
+  const leadingMatch = name.match(/^(\[(\d+)\]|\((\d+)\)|(\d+))[\s._-]+/);
+  if (leadingMatch) {
+    const num = parseInt(leadingMatch[2] || leadingMatch[3] || leadingMatch[4], 10);
+    if (!isNaN(num)) return num;
+  }
+
+  // 3. Isolated number at start or separated by punctuation: e.g. "01.zip", "resource_01.zip", "03"
+  const boundaryMatch = name.match(/(?:^|[\s._#-])(\d{1,3})(?:[\s._-]|$)/);
+  if (boundaryMatch) {
+    const num = parseInt(boundaryMatch[1], 10);
+    if (!isNaN(num)) return num;
+  }
+
+  return null;
+}
+
+export function getAttachmentType(filename: string): 'pdf' | 'zip' | 'code' | 'doc' | 'other' {
+  const ext = getFileExtension(filename);
+  if (ext === 'pdf') return 'pdf';
+  if (['zip', 'tar', 'gz', '7z', 'rar', 'tgz', 'bz2', 'xz'].includes(ext)) return 'zip';
+  if (['ipynb', 'py', 'js', 'ts', 'jsx', 'tsx', 'html', 'css', 'json', 'sql', 'sh', 'bash', 'zsh', 'rs', 'go', 'java', 'c', 'cpp', 'h', 'hpp', 'cs', 'rb', 'php', 'swift', 'kt', 'yaml', 'yml', 'xml', 'toml', 'env'].includes(ext)) return 'code';
+  if (['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'csv', 'txt', 'md', 'epub', 'rtf'].includes(ext)) return 'doc';
+  return 'other';
+}
+
+export function matchAttachmentToLesson(
+  attName: string,
+  parentDirName: string | undefined,
+  lessons: ScannedLesson[]
+): ScannedLesson | null {
+  if (lessons.length === 0) return null;
+
+  // 1. Try matching by exact stem with lesson rawTitle
+  const attStem = getBaseStem(attName);
+  const stemMatch = lessons.find((l) => getBaseStem(l.rawTitle) === attStem);
+  if (stemMatch) return stemMatch;
+
+  // 2. Try extracting lesson number from filename or parent subfolder
+  const numFromFilename = extractLessonNumber(attName);
+  const numFromParent = parentDirName ? extractLessonNumber(parentDirName) : null;
+  const targetNum = numFromFilename ?? numFromParent;
+
+  if (targetNum !== null) {
+    // Check orderIndex first
+    const byOrder = lessons.find((l) => l.orderIndex === targetNum);
+    if (byOrder) return byOrder;
+
+    // Check if rawTitle starts with or contains that number
+    const byRawTitle = lessons.find((l) => {
+      const lesNum = extractLessonNumber(l.rawTitle);
+      return lesNum !== null && lesNum === targetNum;
+    });
+    if (byRawTitle) return byRawTitle;
+  }
+
+  // 3. Title substring matching (min 4 characters)
+  const cleanAttTitle = cleanTitle(attName).title.toLowerCase();
+  if (cleanAttTitle.length >= 4) {
+    const byTitle = lessons.find((l) => {
+      const lesTitle = l.title.toLowerCase();
+      return (
+        lesTitle.length >= 4 &&
+        (cleanAttTitle.includes(lesTitle) || lesTitle.includes(cleanAttTitle))
+      );
+    });
+    if (byTitle) return byTitle;
+  }
+
+  // 4. Fallback: if filename indicates a course-wide/overview resource (e.g. syllabus, cheatsheet, overview)
+  const lower = attName.toLowerCase();
+  if (
+    lower.includes('syllabus') ||
+    lower.includes('overview') ||
+    lower.includes('cheatsheet') ||
+    lower.includes('cheat_sheet') ||
+    lower.includes('course')
+  ) {
+    return lessons[0];
+  }
+
+  return null;
 }
 
 /**
@@ -208,6 +332,64 @@ export async function scanFileSystemDirectory(
   return { courses: scannedCourses, clusters: scannedClusters };
 }
 
+interface ScannedResourceItem {
+  name: string;
+  relativePath: string;
+  file?: File;
+  handle?: FileSystemFileHandle;
+  parentDirName?: string;
+}
+
+async function collectFilesFromDirHandle(
+  dHandle: FileSystemDirectoryHandle,
+  currPath: string,
+  parentName?: string
+): Promise<ScannedResourceItem[]> {
+  const list: ScannedResourceItem[] = [];
+  const entries: { name: string; handle: FileSystemHandle; isDir: boolean }[] = [];
+  const dirWithEntries = dHandle as unknown as { entries: () => AsyncIterable<[string, FileSystemHandle]> };
+  if (typeof dirWithEntries.entries === 'function') {
+    for await (const [name, handle] of dirWithEntries.entries()) {
+      entries.push({ name, handle, isDir: handle.kind === 'directory' });
+    }
+  } else {
+    const dirWithValues = dHandle as unknown as { values: () => AsyncIterable<FileSystemHandle> };
+    for await (const handle of dirWithValues.values()) {
+      entries.push({ name: handle.name, handle, isDir: handle.kind === 'directory' });
+    }
+  }
+
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    if (entry.isDir) {
+      const nested = await collectFilesFromDirHandle(
+        entry.handle as FileSystemDirectoryHandle,
+        `${currPath}/${entry.name}`,
+        entry.name
+      );
+      list.push(...nested);
+    } else {
+      const ext = getFileExtension(entry.name);
+      if (ATTACHMENT_EXTENSIONS.has(ext)) {
+        let file: File | undefined;
+        try {
+          file = await (entry.handle as FileSystemFileHandle).getFile();
+        } catch {
+          // file can be lazily loaded via handle
+        }
+        list.push({
+          name: entry.name,
+          relativePath: `${currPath}/${entry.name}`,
+          file,
+          handle: entry.handle as FileSystemFileHandle,
+          parentDirName: parentName,
+        });
+      }
+    }
+  }
+  return list;
+}
+
 async function parseCourseDirectory(
   courseHandle: FileSystemDirectoryHandle,
   folderName: string,
@@ -248,12 +430,35 @@ async function parseCourseDirectory(
   const rootFiles = entries.filter((e) => !e.isDir && !e.name.startsWith('.'));
   rootFiles.sort((a, b) => collator.compare(a.name, b.name));
 
+  // Separate curriculum module folders from companion resource folders
+  const moduleDirs: typeof entries = [];
+  const resourceDirs: typeof entries = [];
+
+  for (const subDir of subDirs) {
+    if (isResourceDirectoryName(subDir.name)) {
+      resourceDirs.push(subDir);
+    } else {
+      moduleDirs.push(subDir);
+    }
+  }
+
+  // Recursively collect all attachments from course-level resource folders
+  const courseResourceItems: ScannedResourceItem[] = [];
+  for (const rDir of resourceDirs) {
+    const res = await collectFilesFromDirHandle(
+      rDir.handle as FileSystemDirectoryHandle,
+      `${relativePath}/${rDir.name}`,
+      rDir.name
+    );
+    courseResourceItems.push(...res);
+  }
+
   const modules: ScannedModule[] = [];
 
-  // If there are subdirectories that contain video files, parse them as Modules
-  if (subDirs.length > 0) {
-    for (let i = 0; i < subDirs.length; i++) {
-      const subDir = subDirs[i];
+  // Parse curriculum module folders
+  if (moduleDirs.length > 0) {
+    for (let i = 0; i < moduleDirs.length; i++) {
+      const subDir = moduleDirs[i];
       const { title: modTitle, orderIndex } = cleanTitle(subDir.name);
       const modHandle = subDir.handle as FileSystemDirectoryHandle;
       const modPath = `${relativePath}/${subDir.name}`;
@@ -300,6 +505,23 @@ async function parseCourseDirectory(
   }
 
   if (modules.length === 0) return null;
+
+  // Match collected course-level resources to lessons across the course
+  const allCourseLessons = modules.flatMap((m) => m.lessons);
+  for (const item of courseResourceItems) {
+    const matched = matchAttachmentToLesson(item.name, item.parentDirName, allCourseLessons);
+    if (matched) {
+      if (!matched.attachments.some((a) => a.name === item.name || a.relativePath === item.relativePath)) {
+        matched.attachments.push({
+          name: item.name,
+          type: getAttachmentType(item.name),
+          relativePath: item.relativePath,
+          file: item.file,
+          handle: item.handle,
+        });
+      }
+    }
+  }
 
   let totalLessons = 0;
   let totalDurationSeconds = 0;
@@ -348,8 +570,39 @@ async function parseLessonsInDirectory(
     }
   }
 
+  // Check if module contains a resources/ folder
+  const moduleResourceItems: ScannedResourceItem[] = [];
+  for (const entry of entries) {
+    if (entry.isDir && isResourceDirectoryName(entry.name)) {
+      const res = await collectFilesFromDirHandle(
+        entry.handle as FileSystemDirectoryHandle,
+        `${modulePath}/${entry.name}`,
+        entry.name
+      );
+      moduleResourceItems.push(...res);
+    }
+  }
+
   entries.sort((a, b) => collator.compare(a.name, b.name));
-  return parseLessonsFromEntries(entries, modulePath, coursePath);
+  const lessons = await parseLessonsFromEntries(entries, modulePath, coursePath);
+
+  // Attach module-level resources to lessons in this module
+  for (const item of moduleResourceItems) {
+    const matched = matchAttachmentToLesson(item.name, item.parentDirName, lessons);
+    if (matched) {
+      if (!matched.attachments.some((a) => a.name === item.name || a.relativePath === item.relativePath)) {
+        matched.attachments.push({
+          name: item.name,
+          type: getAttachmentType(item.name),
+          relativePath: item.relativePath,
+          file: item.file,
+          handle: item.handle,
+        });
+      }
+    }
+  }
+
+  return lessons;
 }
 
 async function parseLessonsFromEntries(
@@ -426,8 +679,7 @@ async function parseLessonsFromEntries(
       const attachments: ScannedAttachment[] = [];
       for (const att of group.attachments) {
         const file = await att.handle.getFile();
-        const ext = getFileExtension(att.name);
-        const type = ext === 'pdf' ? 'pdf' : ext === 'zip' ? 'zip' : 'code';
+        const type = getAttachmentType(att.name);
         attachments.push({
           name: att.name,
           type,
@@ -483,7 +735,32 @@ async function parseLessonsFromEntries(
     }
   }
 
+  // Try matching loose attachment files to lessons in this module by number or stem
+  const unassignedLoose: { name: string; handle: FileSystemFileHandle }[] = [];
   for (const loose of looseResourceEntries) {
+    const matched = matchAttachmentToLesson(loose.name, undefined, lessons);
+    if (matched) {
+      if (!matched.attachments.some((a) => a.name === loose.name)) {
+        let file: File | undefined;
+        try {
+          file = await loose.handle.getFile();
+        } catch {
+          // ignore
+        }
+        matched.attachments.push({
+          name: loose.name,
+          type: getAttachmentType(loose.name),
+          relativePath: `${modulePath}/${loose.name}`,
+          file,
+          handle: loose.handle,
+        });
+      }
+    } else {
+      unassignedLoose.push(loose);
+    }
+  }
+
+  for (const loose of unassignedLoose) {
     const ext = getFileExtension(loose.name);
     if (ext === 'pdf' || ext === 'md') {
       const { title, orderIndex } = cleanTitle(loose.name);
@@ -716,42 +993,110 @@ function parseCourseFromNode(
 
   // 2. Separate direct files and subdirectories
   const directFiles: File[] = [];
-  const subDirs: { name: string; node: { name: string; file?: File; children: Map<string, unknown> } }[] = [];
+  const moduleSubDirs: { name: string; node: { name: string; file?: File; children: Map<string, unknown> } }[] = [];
+  const resourceSubDirs: { name: string; node: { name: string; file?: File; children: Map<string, unknown> } }[] = [];
 
   for (const [name, child] of node.children.entries()) {
     if (name.startsWith('.')) continue;
     if (child.file) {
       directFiles.push(child.file);
     } else if (child.children.size > 0) {
-      subDirs.push({ name, node: child });
+      if (isResourceDirectoryName(name)) {
+        resourceSubDirs.push({ name, node: child });
+      } else {
+        moduleSubDirs.push({ name, node: child });
+      }
     }
   }
 
-  subDirs.sort((a, b) => collator.compare(a.name, b.name));
+  moduleSubDirs.sort((a, b) => collator.compare(a.name, b.name));
+
+  // Recursively collect all files from course-level resource folders
+  const courseResourceItems: { name: string; relativePath: string; file: File; parentDirName?: string }[] = [];
+  for (const rDir of resourceSubDirs) {
+    function collect(n: { name: string; file?: File; children: Map<string, unknown> }, currPath: string, parentName?: string) {
+      for (const [, c] of n.children.entries()) {
+        const childNode = c as { name: string; file?: File; children: Map<string, unknown> };
+        if (childNode.name.startsWith('.')) continue;
+        if (childNode.file) {
+          const ext = getFileExtension(childNode.name);
+          if (ATTACHMENT_EXTENSIONS.has(ext)) {
+            courseResourceItems.push({
+              name: childNode.name,
+              relativePath: `${currPath}/${childNode.name}`,
+              file: childNode.file,
+              parentDirName: parentName,
+            });
+          }
+        } else if (childNode.children && childNode.children.size > 0) {
+          collect(childNode, `${currPath}/${childNode.name}`, childNode.name);
+        }
+      }
+    }
+    collect(rDir.node, `${relativePath}/${rDir.name}`, rDir.name);
+  }
 
   const modules: ScannedModule[] = [];
   let modIndex = 1;
 
   // 3. Parse subdirectories as modules
-  for (const subDir of subDirs) {
+  for (const subDir of moduleSubDirs) {
     const { title: modTitle, orderIndex } = cleanTitle(subDir.name);
     const modPath = `${relativePath}/${subDir.name}`;
 
     const subFiles: File[] = [];
-    function collectFiles(n: { name: string; file?: File; children: Map<string, unknown> }) {
-      for (const [, c] of n.children.entries()) {
+    const moduleResourceFiles: { name: string; relativePath: string; file: File; parentDirName?: string }[] = [];
+
+    function collectModuleFiles(n: { name: string; file?: File; children: Map<string, unknown> }, currPath: string) {
+      for (const [childName, c] of n.children.entries()) {
         const childNode = c as { name: string; file?: File; children: Map<string, unknown> };
         if (childNode.name.startsWith('.')) continue;
         if (childNode.file) {
           subFiles.push(childNode.file);
         } else if (childNode.children && childNode.children.size > 0) {
-          collectFiles(childNode);
+          if (isResourceDirectoryName(childName)) {
+            // Collect module resource subfolder files
+            function collectRes(resNode: { name: string; file?: File; children: Map<string, unknown> }, resPath: string, parentName?: string) {
+              for (const [, r] of resNode.children.entries()) {
+                const rChild = r as { name: string; file?: File; children: Map<string, unknown> };
+                if (rChild.file && ATTACHMENT_EXTENSIONS.has(getFileExtension(rChild.name))) {
+                  moduleResourceFiles.push({
+                    name: rChild.name,
+                    relativePath: `${resPath}/${rChild.name}`,
+                    file: rChild.file,
+                    parentDirName: parentName,
+                  });
+                } else if (rChild.children && rChild.children.size > 0) {
+                  collectRes(rChild, `${resPath}/${rChild.name}`, rChild.name);
+                }
+              }
+            }
+            collectRes(childNode, `${currPath}/${childName}`, childName);
+          } else {
+            collectModuleFiles(childNode, `${currPath}/${childName}`);
+          }
         }
       }
     }
-    collectFiles(subDir.node);
+    collectModuleFiles(subDir.node, modPath);
 
     const lessons = parseLessonsFromFileList(subFiles, modPath, relativePath);
+
+    // Attach module-level resources to lessons in this module
+    for (const item of moduleResourceFiles) {
+      const matched = matchAttachmentToLesson(item.name, item.parentDirName, lessons);
+      if (matched) {
+        if (!matched.attachments.some((a) => a.name === item.name || a.relativePath === item.relativePath)) {
+          matched.attachments.push({
+            name: item.name,
+            type: getAttachmentType(item.name),
+            relativePath: item.relativePath,
+            file: item.file,
+          });
+        }
+      }
+    }
+
     if (lessons.length > 0) {
       modules.push({
         id: `mod-${modPath}`,
@@ -764,7 +1109,7 @@ function parseCourseFromNode(
     }
   }
 
-  // 4. Parse direct files in course root (CRITICAL for courses with flat videos!)
+  // 4. Parse direct files in course root (for courses with flat videos)
   if (directFiles.length > 0) {
     const rootLessons = parseLessonsFromFileList(directFiles, relativePath, relativePath);
     if (rootLessons.length > 0) {
@@ -791,6 +1136,22 @@ function parseCourseFromNode(
   }
 
   if (modules.length === 0) return null;
+
+  // 5. Match course-level resources to lessons across the entire course
+  const allCourseLessons = modules.flatMap((m) => m.lessons);
+  for (const item of courseResourceItems) {
+    const matched = matchAttachmentToLesson(item.name, item.parentDirName, allCourseLessons);
+    if (matched) {
+      if (!matched.attachments.some((a) => a.name === item.name || a.relativePath === item.relativePath)) {
+        matched.attachments.push({
+          name: item.name,
+          type: getAttachmentType(item.name),
+          relativePath: item.relativePath,
+          file: item.file,
+        });
+      }
+    }
+  }
 
   modules.sort((a, b) => a.orderIndex - b.orderIndex || collator.compare(a.title, b.title));
 
@@ -852,7 +1213,7 @@ function parseLessonsFromFileList(
       stemGroups.set(stem, group);
     } else if (ATTACHMENT_EXTENSIONS.has(ext)) {
       const group = stemGroups.get(stem);
-      const type = ext === 'pdf' ? 'pdf' : ext === 'zip' ? 'zip' : 'code';
+      const type = getAttachmentType(file.name);
       const att: ScannedAttachment = {
         name: file.name,
         type,
@@ -914,7 +1275,25 @@ function parseLessonsFromFileList(
     }
   }
 
+  // Try matching loose attachment files to lessons in this module by number or stem
+  const unassignedLoose: File[] = [];
   for (const loose of looseResourceFiles) {
+    const matched = matchAttachmentToLesson(loose.name, undefined, lessons);
+    if (matched) {
+      if (!matched.attachments.some((a) => a.name === loose.name)) {
+        matched.attachments.push({
+          name: loose.name,
+          type: getAttachmentType(loose.name),
+          relativePath: `${modulePath}/${loose.name}`,
+          file: loose,
+        });
+      }
+    } else {
+      unassignedLoose.push(loose);
+    }
+  }
+
+  for (const loose of unassignedLoose) {
     const ext = getFileExtension(loose.name);
     if (ext === 'pdf' || ext === 'md') {
       const { title, orderIndex } = cleanTitle(loose.name);
