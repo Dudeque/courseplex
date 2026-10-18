@@ -21,8 +21,10 @@ import {
   Menu,
   X,
   ExternalLink,
+  Lock,
 } from 'lucide-react';
 import { Suspense } from 'react';
+import { lockDevice } from '@/lib/security';
 
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
@@ -269,6 +271,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </button>
             </div>
           )}
+
+          {/* Quick Lock Button */}
+          <button
+            onClick={() => {
+              lockDevice();
+              window.dispatchEvent(new CustomEvent('courseplex-lock-app'));
+            }}
+            className="w-full py-1.5 px-2 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-white/5 text-[11px] font-medium transition-all flex items-center justify-center gap-1.5"
+            title="Lock CoursePlex session"
+          >
+            <Lock className="w-3 h-3" />
+            <span>Lock App</span>
+          </button>
         </div>
       </aside>
 

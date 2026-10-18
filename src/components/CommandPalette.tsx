@@ -14,8 +14,10 @@ import {
   Flame,
   Layers,
   X,
+  Lock,
 } from 'lucide-react';
 import { downloadBackupJson } from '@/lib/disk-sync';
+import { lockDevice } from '@/lib/security';
 
 interface CommandItem {
   id: string;
@@ -129,6 +131,19 @@ export function CommandPalette() {
       action: () => {
         setIsOpen(false);
         router.push('/stats');
+      },
+    });
+
+    results.push({
+      id: 'action-lock',
+      category: 'Action',
+      title: 'Lock CoursePlex',
+      subtitle: 'Lock session and require passcode to re-enter',
+      icon: <Lock className="w-4 h-4 text-red-400" />,
+      action: () => {
+        setIsOpen(false);
+        lockDevice();
+        window.dispatchEvent(new CustomEvent('courseplex-lock-app'));
       },
     });
 
