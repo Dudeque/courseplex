@@ -9,10 +9,12 @@ import {
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
-const VIDEO_EXTENSIONS = new Set(['mp4', 'mkv', 'webm', 'mov', 'm4v']);
-const SUBTITLE_EXTENSIONS = new Set(['srt', 'vtt']);
-const NOTE_EXTENSIONS = new Set(['md', 'txt', 'html']);
-const ATTACHMENT_EXTENSIONS = new Set([
+export const VIDEO_EXTENSIONS = new Set([
+  'mp4', 'mkv', 'webm', 'mov', 'm4v', 'avi', 'wmv', 'flv', 'ts', '3gp', 'm4p', 'mpg', 'mpeg', 'm2ts', 'vob', 'ogv',
+]);
+export const SUBTITLE_EXTENSIONS = new Set(['srt', 'vtt']);
+export const NOTE_EXTENSIONS = new Set(['md', 'txt', 'html']);
+export const ATTACHMENT_EXTENSIONS = new Set([
   // Archives
   'zip', 'tar', 'gz', '7z', 'rar', 'tgz', 'bz2', 'xz',
   // Documents & Slides
@@ -26,13 +28,46 @@ const ATTACHMENT_EXTENSIONS = new Set([
   // Images (diagrams, cheatsheets, slides)
   'png', 'jpg', 'jpeg', 'webp', 'svg',
 ]);
-const COVER_NAMES = new Set([
+export const COVER_NAMES = new Set([
   'cover.jpg', 'cover.jpeg', 'cover.png', 'cover.webp',
   'poster.jpg', 'poster.jpeg', 'poster.png', 'poster.webp',
   'folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp',
 ]);
 
-const CLUSTER_COLORS = [
+export const IGNORED_DIRECTORIES = new Set([
+  'node_modules', '.git', '.next', '.turbo', 'dist', 'build', 'coverage',
+  '__pycache__', '.venv', 'venv', 'vendor', '.cache', '.vscode', '.idea',
+  'library', '$recycle.bin', 'system volume information'
+]);
+
+export async function isMpegTsFileInBrowser(file: File): Promise<boolean> {
+  if (file.size < 188) return false;
+  try {
+    const slice = file.slice(0, 189);
+    const arrayBuffer = await slice.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    return bytes[0] === 0x47 && (bytes.length < 189 || bytes[188] === 0x47);
+  } catch {
+    return false;
+  }
+}
+
+export async function isVideoFileHandle(handle: FileSystemFileHandle, filename: string): Promise<boolean> {
+  if (filename.endsWith('.d.ts')) return false;
+  const ext = getFileExtension(filename);
+  if (!VIDEO_EXTENSIONS.has(ext)) return false;
+  if (ext === 'ts') {
+    try {
+      const file = await handle.getFile();
+      return isMpegTsFileInBrowser(file);
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+export const CLUSTER_COLORS = [
   '#6366f1', // Indigo
   '#8b5cf6', // Purple
   '#ec4899', // Pink
@@ -197,36 +232,47 @@ export function matchAttachmentToLesson(
 /**
  * Scan directory using FileSystemDirectoryHandle (Chrome, Edge, Opera, Arc)
  */
+export interface DirItem {
+  name: string;
+  handle: FileSystemHandle;
+  isDir: boolean;
+}
+
+export async function getDirHandleEntries(dirHandle: FileSystemDirectoryHandle): Promise<DirItem[]> {
+  const items: DirItem[] = [];
+  try {
+    const dirWithEntries = dirHandle as unknown as { entries: () => AsyncIterable<[string, FileSystemHandle]> };
+    if (typeof dirWithEntries.entries === 'function') {
+      for await (const [name, handle] of dirWithEntries.entries()) {
+        if (!IGNORED_DIRECTORIES.has(name.toLowerCase())) {
+          items.push({ name, handle, isDir: handle.kind === 'directory' });
+        }
+      }
+    } else {
+      const dirWithValues = dirHandle as unknown as { values: () => AsyncIterable<FileSystemHandle> };
+      for await (const handle of dirWithValues.values()) {
+        if (!IGNORED_DIRECTORIES.has(handle.name.toLowerCase())) {
+          items.push({ name: handle.name, handle, isDir: handle.kind === 'directory' });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Could not read directory handle entries:', err);
+  }
+  return items.sort((a, b) => collator.compare(a.name, b.name));
+}
+
+/**
+ * Scan directory using FileSystemDirectoryHandle (Chrome, Edge, Opera, Arc)
+ */
 export async function scanFileSystemDirectory(
   rootDirHandle: FileSystemDirectoryHandle,
   onProgress?: (status: string) => void
 ): Promise<{ courses: ScannedCourse[]; clusters: ScannedCluster[] }> {
   onProgress?.('Reading root directory contents...');
 
-  interface DirItem {
-    name: string;
-    handle: FileSystemHandle;
-    isDir: boolean;
-  }
-
-  async function getEntries(dirHandle: FileSystemDirectoryHandle): Promise<DirItem[]> {
-    const items: DirItem[] = [];
-    const dirWithEntries = dirHandle as unknown as { entries: () => AsyncIterable<[string, FileSystemHandle]> };
-    if (typeof dirWithEntries.entries === 'function') {
-      for await (const [name, handle] of dirWithEntries.entries()) {
-        items.push({ name, handle, isDir: handle.kind === 'directory' });
-      }
-    } else {
-      const dirWithValues = dirHandle as unknown as { values: () => AsyncIterable<FileSystemHandle> };
-      for await (const handle of dirWithValues.values()) {
-        items.push({ name: handle.name, handle, isDir: handle.kind === 'directory' });
-      }
-    }
-    return items.sort((a, b) => collator.compare(a.name, b.name));
-  }
-
-  const rootEntries = await getEntries(rootDirHandle);
-  const rootDirs = rootEntries.filter((e) => e.isDir);
+  const rootEntries = await getDirHandleEntries(rootDirHandle);
+  const rootDirs = rootEntries.filter((e) => e.isDir && !IGNORED_DIRECTORIES.has(e.name.toLowerCase()));
 
   const scannedCourses: ScannedCourse[] = [];
   const scannedClusters: ScannedCluster[] = [];
@@ -234,26 +280,24 @@ export async function scanFileSystemDirectory(
   // Determine whether top-level folders are Clusters or Courses
   for (let i = 0; i < rootDirs.length; i++) {
     const dirEntry = rootDirs[i];
-    // Skip hidden folders (.git, .courseplex, etc.)
     if (dirEntry.name.startsWith('.')) continue;
 
     onProgress?.(`Inspecting ${dirEntry.name}...`);
     const subHandle = dirEntry.handle as FileSystemDirectoryHandle;
-    const subEntries = await getEntries(subHandle);
+    const subEntries = await getDirHandleEntries(subHandle);
 
     const hasDirectVideos = subEntries.some(
-      (e) => !e.isDir && VIDEO_EXTENSIONS.has(getFileExtension(e.name))
+      (e) => !e.isDir && VIDEO_EXTENSIONS.has(getFileExtension(e.name)) && !e.name.endsWith('.d.ts')
     );
     const subSubDirs = subEntries.filter((e) => e.isDir && !e.name.startsWith('.'));
 
-    // Check if subdirectories have videos (meaning subDirs are Modules -> this folder is a Course)
     let subDirsContainVideos = false;
     let subDirsAreCourses = false;
 
     for (const subSub of subSubDirs) {
-      const subSubEntries = await getEntries(subSub.handle as FileSystemDirectoryHandle);
+      const subSubEntries = await getDirHandleEntries(subSub.handle as FileSystemDirectoryHandle);
       const subSubHasVideos = subSubEntries.some(
-        (e) => !e.isDir && VIDEO_EXTENSIONS.has(getFileExtension(e.name))
+        (e) => !e.isDir && VIDEO_EXTENSIONS.has(getFileExtension(e.name)) && !e.name.endsWith('.d.ts')
       );
       if (subSubHasVideos) {
         subDirsContainVideos = true;
@@ -261,8 +305,8 @@ export async function scanFileSystemDirectory(
       const deeperDirs = subSubEntries.filter((e) => e.isDir && !e.name.startsWith('.'));
       for (const deep of deeperDirs) {
         try {
-          const deepEntries = await getEntries(deep.handle as FileSystemDirectoryHandle);
-          if (deepEntries.some((e) => !e.isDir && VIDEO_EXTENSIONS.has(getFileExtension(e.name)))) {
+          const deepEntries = await getDirHandleEntries(deep.handle as FileSystemDirectoryHandle);
+          if (deepEntries.some((e) => !e.isDir && VIDEO_EXTENSIONS.has(getFileExtension(e.name)) && !e.name.endsWith('.d.ts'))) {
             subDirsAreCourses = true;
             break;
           }
@@ -323,14 +367,351 @@ export async function scanFileSystemDirectory(
     const rootCourse = await parseCourseDirectory(
       rootDirHandle,
       rootDirHandle.name || 'Local Course',
-      '.',
+      '_root_',
       undefined,
       undefined
     );
     if (rootCourse) scannedCourses.push(rootCourse);
   }
 
+  // Deep recursive discovery fallback: if shallow scan found 0 courses or 0 lessons,
+  // walk all directory levels to discover and auto-organize all videos
+  const totalLessonsFound = scannedCourses.reduce((acc, c) => acc + c.totalLessons, 0);
+  if (scannedCourses.length === 0 || totalLessonsFound === 0) {
+    onProgress?.('Deep scanning all subfolders for video files...');
+    const deepResult = await deepScanFileSystemDirectory(rootDirHandle, onProgress);
+    if (deepResult.courses.length > 0) {
+      scannedCourses.length = 0;
+      scannedClusters.length = 0;
+      scannedCourses.push(...deepResult.courses);
+      scannedClusters.push(...deepResult.clusters);
+    }
+  }
+
   return { courses: scannedCourses, clusters: scannedClusters };
+}
+
+interface DiscoveredHandleFile {
+  name: string;
+  ext: string;
+  handle: FileSystemFileHandle;
+  relPath: string;
+  relDir: string;
+}
+
+async function collectAllHandleFiles(
+  dirHandle: FileSystemDirectoryHandle,
+  relDir: string,
+  depth = 0,
+  maxDepth = 8
+): Promise<DiscoveredHandleFile[]> {
+  if (depth > maxDepth) return [];
+  const items = await getDirHandleEntries(dirHandle);
+  const files: DiscoveredHandleFile[] = [];
+
+  for (const item of items) {
+    if (item.name.startsWith('.')) continue;
+    if (IGNORED_DIRECTORIES.has(item.name.toLowerCase())) continue;
+
+    if (item.isDir) {
+      const nextRel = relDir ? `${relDir}/${item.name}` : item.name;
+      const nested = await collectAllHandleFiles(
+        item.handle as FileSystemDirectoryHandle,
+        nextRel,
+        depth + 1,
+        maxDepth
+      );
+      files.push(...nested);
+    } else {
+      const ext = getFileExtension(item.name);
+      const relPath = relDir ? `${relDir}/${item.name}` : item.name;
+      files.push({
+        name: item.name,
+        ext,
+        handle: item.handle as FileSystemFileHandle,
+        relPath,
+        relDir: relDir || '.',
+      });
+    }
+  }
+
+  return files;
+}
+
+async function deepScanFileSystemDirectory(
+  rootDirHandle: FileSystemDirectoryHandle,
+  onProgress?: (status: string) => void
+): Promise<{ courses: ScannedCourse[]; clusters: ScannedCluster[] }> {
+  onProgress?.('Recursively searching for video files...');
+  const allFiles = await collectAllHandleFiles(rootDirHandle, '');
+
+  const candidateVideos = allFiles.filter((f) => !f.name.endsWith('.d.ts') && VIDEO_EXTENSIONS.has(f.ext));
+  const videoFiles: DiscoveredHandleFile[] = [];
+  for (const f of candidateVideos) {
+    if (f.ext === 'ts') {
+      try {
+        const file = await f.handle.getFile();
+        if (await isMpegTsFileInBrowser(file)) {
+          videoFiles.push(f);
+        }
+      } catch {
+        // ignore
+      }
+    } else {
+      videoFiles.push(f);
+    }
+  }
+
+  if (videoFiles.length === 0) {
+    return { courses: [], clusters: [] };
+  }
+
+  interface CourseBucket {
+    courseKey: string;
+    courseTitle: string;
+    clusterId?: string;
+    clusterName?: string;
+    modules: Map<string, {
+      moduleKey: string;
+      moduleTitle: string;
+      orderIndex: number;
+      videos: DiscoveredHandleFile[];
+    }>;
+  }
+
+  const courseMap = new Map<string, CourseBucket>();
+
+  for (const v of videoFiles) {
+    const parts = v.relDir === '.' ? [] : v.relDir.split('/');
+
+    let courseKey = '_root_';
+    let courseTitle = rootDirHandle.name || 'Local Course';
+    let clusterId: string | undefined;
+    let clusterName: string | undefined;
+    let moduleKey = '_root_';
+    let moduleTitle = 'Course Curriculum';
+
+    if (parts.length === 0) {
+      courseKey = '_root_';
+      courseTitle = rootDirHandle.name || 'Local Course';
+      moduleKey = '_root_';
+      moduleTitle = 'Course Curriculum';
+    } else if (parts.length === 1) {
+      courseKey = parts[0];
+      courseTitle = cleanTitle(parts[0]).title;
+      moduleKey = parts[0];
+      moduleTitle = 'Course Curriculum';
+    } else if (parts.length === 2) {
+      courseKey = parts[0];
+      courseTitle = cleanTitle(parts[0]).title;
+      moduleKey = `${parts[0]}/${parts[1]}`;
+      moduleTitle = cleanTitle(parts[1]).title;
+    } else if (parts.length === 3) {
+      const last = parts[2].toLowerCase();
+      if (['videos', 'video', 'content', 'lectures', 'lessons', 'media'].includes(last)) {
+        courseKey = parts[0];
+        courseTitle = cleanTitle(parts[0]).title;
+        moduleKey = `${parts[0]}/${parts[1]}`;
+        moduleTitle = cleanTitle(parts[1]).title;
+      } else {
+        clusterId = `cluster-${parts[0].toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+        clusterName = cleanTitle(parts[0]).title;
+        courseKey = `${parts[0]}/${parts[1]}`;
+        courseTitle = cleanTitle(parts[1]).title;
+        moduleKey = `${parts[0]}/${parts[1]}/${parts[2]}`;
+        moduleTitle = cleanTitle(parts[2]).title;
+      }
+    } else {
+      const last = parts[parts.length - 1].toLowerCase();
+      let modIdx = parts.length - 1;
+      if (['videos', 'video', 'content', 'lectures', 'lessons', 'media'].includes(last)) {
+        modIdx = parts.length - 2;
+      }
+      const courseIdx = modIdx - 1;
+      const clusterParts = parts.slice(0, courseIdx);
+
+      if (clusterParts.length > 0) {
+        clusterId = `cluster-${clusterParts[0].toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+        clusterName = clusterParts.map((p) => cleanTitle(p).title).join(' / ');
+      }
+
+      courseKey = parts.slice(0, courseIdx + 1).join('/');
+      courseTitle = cleanTitle(parts[courseIdx]).title;
+      moduleKey = parts.slice(0, modIdx + 1).join('/');
+      moduleTitle = cleanTitle(parts[modIdx]).title;
+    }
+
+    let bucket = courseMap.get(courseKey);
+    if (!bucket) {
+      bucket = {
+        courseKey,
+        courseTitle,
+        clusterId,
+        clusterName,
+        modules: new Map(),
+      };
+      courseMap.set(courseKey, bucket);
+    }
+
+    let modBucket = bucket.modules.get(moduleKey);
+    if (!modBucket) {
+      const { orderIndex } = cleanTitle(moduleTitle);
+      modBucket = {
+        moduleKey,
+        moduleTitle,
+        orderIndex,
+        videos: [],
+      };
+      bucket.modules.set(moduleKey, modBucket);
+    }
+
+    modBucket.videos.push(v);
+  }
+
+  const subtitleFiles = allFiles.filter((f) => SUBTITLE_EXTENSIONS.has(f.ext));
+  const coverFiles = allFiles.filter((f) => COVER_NAMES.has(f.name.toLowerCase()));
+
+  const courses: ScannedCourse[] = [];
+  const clusterMap = new Map<string, { id: string; name: string; coursePaths: string[] }>();
+
+  for (const bucket of courseMap.values()) {
+    let coverUrl: string | undefined;
+    let coverFile: File | undefined;
+
+    const matchedCover = coverFiles.find(
+      (c) => c.relDir === (bucket.courseKey === '_root_' ? '.' : bucket.courseKey)
+    );
+    if (matchedCover) {
+      try {
+        coverFile = await matchedCover.handle.getFile();
+        coverUrl = URL.createObjectURL(coverFile);
+      } catch {
+        // ignore
+      }
+    }
+
+    const courseModules: ScannedModule[] = [];
+    let modFallbackOrder = 1;
+
+    for (const mod of bucket.modules.values()) {
+      const lessons: ScannedLesson[] = [];
+      let lesFallbackOrder = 1;
+
+      for (const v of mod.videos) {
+        const { title, orderIndex } = cleanTitle(v.name);
+        const vStem = v.name.replace(/\.[a-zA-Z0-9]+$/, '').toLowerCase().trim();
+
+        const matchedSubs: { name: string; lang: string; file?: File; handle?: FileSystemFileHandle }[] = [];
+        const dirSubs = subtitleFiles.filter((s) => s.relDir === v.relDir);
+        for (const s of dirSubs) {
+          const sStem = s.name.replace(/\.(en|es|fr|de|pt|ru|zh|ja|ko)?\.[a-zA-Z0-9]+$/, '').toLowerCase().trim();
+          if (sStem === vStem || sStem.includes(vStem) || vStem.includes(sStem)) {
+            const langMatch = s.name.match(/\.(en|es|fr|de|pt|ru|zh|ja|ko)\.(srt|vtt)$/i);
+            const lang = langMatch ? langMatch[1].toLowerCase() : 'en';
+            try {
+              const subFile = await s.handle.getFile();
+              matchedSubs.push({ name: s.name, lang, file: subFile, handle: s.handle });
+            } catch {
+              matchedSubs.push({ name: s.name, lang, handle: s.handle });
+            }
+          }
+        }
+
+        let videoFile: File | undefined;
+        try {
+          videoFile = await v.handle.getFile();
+        } catch {
+          // ignore
+        }
+
+        lessons.push({
+          id: `lesson-${v.relPath}`,
+          title,
+          rawTitle: v.name,
+          orderIndex: orderIndex !== 9999 ? orderIndex : lesFallbackOrder++,
+          relativePath: bucket.courseKey === '_root_' ? v.name : v.relPath,
+          coursePath: bucket.courseKey,
+          modulePath: mod.moduleKey,
+          isVideo: true,
+          isResourceOnly: false,
+          durationSeconds: 0,
+          videoFile,
+          videoHandle: v.handle,
+          subtitleFiles: matchedSubs,
+          attachments: [],
+        });
+      }
+
+      lessons.sort((a, b) => {
+        if (a.orderIndex !== b.orderIndex) return a.orderIndex - b.orderIndex;
+        return collator.compare(a.title, b.title);
+      });
+
+      if (lessons.length > 0) {
+        courseModules.push({
+          id: `mod-${mod.moduleKey}`,
+          title: mod.moduleTitle,
+          rawTitle: mod.moduleTitle,
+          orderIndex: mod.orderIndex !== 9999 ? mod.orderIndex : modFallbackOrder++,
+          relativePath: mod.moduleKey,
+          lessons,
+        });
+      }
+    }
+
+    courseModules.sort((a, b) => {
+      if (a.orderIndex !== b.orderIndex) return a.orderIndex - b.orderIndex;
+      return collator.compare(a.title, b.title);
+    });
+
+    if (courseModules.length > 0) {
+      let totalLessons = 0;
+      for (const m of courseModules) totalLessons += m.lessons.length;
+
+      const course: ScannedCourse = {
+        id: bucket.courseKey === '_root_' ? 'course-root' : `course-${bucket.courseKey}`,
+        title: bucket.courseTitle,
+        rawTitle: bucket.courseTitle,
+        relativePath: bucket.courseKey,
+        clusterId: bucket.clusterId,
+        clusterName: bucket.clusterName,
+        coverUrl,
+        coverFile,
+        modules: courseModules,
+        totalLessons,
+        totalDurationSeconds: 0,
+        courseDirHandle: rootDirHandle,
+      };
+
+      courses.push(course);
+
+      if (bucket.clusterId && bucket.clusterName) {
+        const existingCluster = clusterMap.get(bucket.clusterId) || {
+          id: bucket.clusterId,
+          name: bucket.clusterName,
+          coursePaths: [],
+        };
+        existingCluster.coursePaths.push(bucket.courseKey);
+        clusterMap.set(bucket.clusterId, existingCluster);
+      }
+    }
+  }
+
+  courses.sort((a, b) => collator.compare(a.title, b.title));
+
+  const clusters: ScannedCluster[] = [];
+  let colorIdx = 0;
+  for (const c of clusterMap.values()) {
+    clusters.push({
+      id: c.id,
+      name: c.name,
+      relativePath: c.id,
+      color: CLUSTER_COLORS[colorIdx++ % CLUSTER_COLORS.length],
+      coursePaths: c.coursePaths,
+    });
+  }
+
+  return { courses, clusters };
 }
 
 interface ScannedResourceItem {
@@ -629,7 +1010,8 @@ async function parseLessonsFromEntries(
     const stem = getBaseStem(entry.name);
     const fileHandle = entry.handle as FileSystemFileHandle;
 
-    if (VIDEO_EXTENSIONS.has(ext)) {
+    const isVid = await isVideoFileHandle(fileHandle, entry.name);
+    if (isVid) {
       const group = stemGroups.get(stem) || { stem, subtitleEntries: [], attachments: [] };
       group.videoEntry = { name: entry.name, handle: fileHandle };
       stemGroups.set(stem, group);
@@ -647,6 +1029,29 @@ async function parseLessonsFromEntries(
         group.attachments.push({ name: entry.name, handle: fileHandle });
       } else {
         looseResourceEntries.push({ name: entry.name, handle: fileHandle });
+      }
+    }
+  }
+
+  // If no direct videos were found in module root, check non-resource subdirectories (e.g. Videos/, Content/)
+  if (!Array.from(stemGroups.values()).some((g) => g.videoEntry)) {
+    const videoSubDirs = entries.filter((e) => e.isDir && !isResourceDirectoryName(e.name) && !IGNORED_DIRECTORIES.has(e.name.toLowerCase()));
+    for (const vSub of videoSubDirs) {
+      const nestedEntries = await getDirHandleEntries(vSub.handle as FileSystemDirectoryHandle);
+      for (const nested of nestedEntries.filter((i) => !i.isDir && !i.name.startsWith('.'))) {
+        const ext = getFileExtension(nested.name);
+        const stem = getBaseStem(nested.name);
+        const fileHandle = nested.handle as FileSystemFileHandle;
+        const isNestedVid = await isVideoFileHandle(fileHandle, nested.name);
+        if (isNestedVid) {
+          const group = stemGroups.get(stem) || { stem, subtitleEntries: [], attachments: [] };
+          group.videoEntry = { name: `${vSub.name}/${nested.name}`, handle: fileHandle };
+          stemGroups.set(stem, group);
+        } else if (SUBTITLE_EXTENSIONS.has(ext)) {
+          const group = stemGroups.get(stem) || { stem, subtitleEntries: [], attachments: [] };
+          group.subtitleEntries.push({ name: `${vSub.name}/${nested.name}`, handle: fileHandle });
+          stemGroups.set(stem, group);
+        }
       }
     }
   }
@@ -963,9 +1368,45 @@ export async function scanFileList(
   if (courses.length === 0) {
     const singleCandidate = root.children.size === 1 ? root.children.values().next().value! : root;
     const candidateName = singleCandidate.name || 'Local Course';
-    const singleCourse = parseCourseFromNode(singleCandidate, candidateName, '.');
-    if (singleCourse) {
+    const singleCourse = parseCourseFromNode(singleCandidate, candidateName, '_root_');
+    if (singleCourse && singleCourse.modules.some((m) => m.lessons.length > 0)) {
       courses.push(singleCourse);
+    }
+  }
+
+  // Deep scan fallback if no courses were structured conventionally
+  if (courses.length === 0) {
+    const videoFiles: File[] = [];
+    for (const f of files) {
+      if (f.name.endsWith('.d.ts')) continue;
+      const ext = getFileExtension(f.name);
+      if (VIDEO_EXTENSIONS.has(ext)) {
+        videoFiles.push(f);
+      }
+    }
+
+    if (videoFiles.length > 0) {
+      const lessons = parseLessonsFromFileList(videoFiles, '_root_', '_root_');
+      if (lessons.length > 0) {
+        courses.push({
+          id: 'course-_root_',
+          title: 'Imported Videos',
+          rawTitle: 'Imported Videos',
+          relativePath: '_root_',
+          modules: [
+            {
+              id: 'mod-_root_',
+              title: 'Videos',
+              rawTitle: 'Videos',
+              orderIndex: 1,
+              relativePath: '_root_',
+              lessons,
+            },
+          ],
+          totalDurationSeconds: 0,
+          totalLessons: lessons.length,
+        });
+      }
     }
   }
 
@@ -1193,6 +1634,7 @@ function parseLessonsFromFileList(
   const looseResourceFiles: File[] = [];
 
   for (const file of files) {
+    if (file.name.endsWith('.d.ts')) continue;
     const ext = getFileExtension(file.name);
     const stem = getBaseStem(file.name);
 

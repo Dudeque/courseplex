@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { NextRequest, NextResponse } from 'next/server';
 import { getLocalCoursesDir, setLocalCoursesDir, clearLocalCoursesDir } from '@/lib/server-config';
 
@@ -8,12 +11,24 @@ export async function GET() {
       coursesDir: null,
       configured: false,
       isVercel: true,
+      suggestedDirs: [],
     });
   }
   const dir = await getLocalCoursesDir();
+  const home = os.homedir();
+  const candidateDirs = [
+    { label: 'Downloads', path: path.join(home, 'Downloads') },
+    { label: 'Movies', path: path.join(home, 'Movies') },
+    { label: 'Videos', path: path.join(home, 'Videos') },
+    { label: 'Documents', path: path.join(home, 'Documents') },
+    { label: 'Desktop', path: path.join(home, 'Desktop') },
+  ];
+  const suggestedDirs = candidateDirs.filter((d) => fs.existsSync(/*turbopackIgnore: true*/ d.path));
+
   return NextResponse.json({
     coursesDir: dir,
     configured: Boolean(dir),
+    suggestedDirs,
   });
 }
 

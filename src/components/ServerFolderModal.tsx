@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useSyncExternalStore } from 'react';
+import React, { useState, useEffect, useSyncExternalStore } from 'react';
 import { useCourseStore } from '@/store/useCourseStore';
 import {
   HardDrive,
@@ -27,9 +27,26 @@ export function ServerFolderModal() {
 
   const [pathInput, setPathInput] = useState(serverCoursesDir || '');
   const [prevDir, setPrevDir] = useState(serverCoursesDir);
+  const [suggestedDirs, setSuggestedDirs] = useState<{ label: string; path: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isFolderModalOpen) return;
+    let mounted = true;
+    fetch('/api/local/config')
+      .then((res) => res.json())
+      .then((data) => {
+        if (mounted && Array.isArray(data.suggestedDirs)) {
+          setSuggestedDirs(data.suggestedDirs);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, [isFolderModalOpen]);
 
   if (serverCoursesDir !== prevDir) {
     setPrevDir(serverCoursesDir);
@@ -186,6 +203,35 @@ export function ServerFolderModal() {
                 autoFocus
               />
             </div>
+            {suggestedDirs.length > 0 && (
+              <div className="pt-1 space-y-1.5">
+                <span className="text-[11px] text-gray-400 font-medium">Quick Select Folders:</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {suggestedDirs.map((dir) => {
+                    const isSelected = pathInput === dir.path;
+                    return (
+                      <button
+                        key={dir.path}
+                        type="button"
+                        onClick={() => {
+                          setPathInput(dir.path);
+                          setError(null);
+                        }}
+                        className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all cursor-pointer flex items-center gap-1.5 ${
+                          isSelected
+                            ? 'bg-indigo-600/30 border-indigo-500/50 text-indigo-200'
+                            : 'bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20 text-gray-300'
+                        }`}
+                        title={dir.path}
+                      >
+                        <Folder className="w-3 h-3 text-indigo-400" />
+                        <span>{dir.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <p className="text-[11px] text-gray-500 leading-normal">
               Mac tip: In Finder, right-click your courses folder, hold <strong className="text-gray-300">Option (⌥)</strong>, and click <strong className="text-gray-300">Copy &ldquo;Folder&rdquo; as Pathname</strong>.
             </p>

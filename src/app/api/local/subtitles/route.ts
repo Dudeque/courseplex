@@ -17,7 +17,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Missing path parameter' }, { status: 400 });
   }
 
-  const normalized = path.normalize(relativePath).replace(/^(\.\.[\/\\])+/, '');
+  const cleanRel = relativePath.replace(/^_root_[\/\\]/, '');
+  const normalized = path.normalize(cleanRel).replace(/^(\.\.[\/\\])+/, '');
   const fullPath = path.resolve(rootDir, normalized);
   const rootResolved = path.resolve(rootDir);
 

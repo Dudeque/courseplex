@@ -37,6 +37,35 @@ const COVER_NAMES = new Set([
   'folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp',
 ]);
 
+const IGNORED_DIRECTORIES = new Set([
+  'node_modules', '.git', '.next', '.turbo', 'dist', 'build', 'coverage',
+  '__pycache__', '.venv', 'venv', 'vendor', '.cache', '.vscode', '.idea',
+  'library', '$recycle.bin', 'system volume information'
+]);
+
+async function isMpegTsFile(filePath: string): Promise<boolean> {
+  try {
+    const fd = await fs.promises.open(filePath, 'r');
+    const buffer = Buffer.alloc(189);
+    const { bytesRead } = await fd.read(buffer, 0, 189, 0);
+    await fd.close();
+    if (bytesRead < 188) return false;
+    return buffer[0] === 0x47 && (bytesRead < 189 || buffer[188] === 0x47);
+  } catch {
+    return false;
+  }
+}
+
+async function isVideoFilePath(filePath: string, filename: string): Promise<boolean> {
+  if (filename.endsWith('.d.ts')) return false;
+  const ext = getFileExtension(filename);
+  if (!VIDEO_EXTENSIONS.has(ext)) return false;
+  if (ext === 'ts') {
+    return isMpegTsFile(filePath);
+  }
+  return true;
+}
+
 const CLUSTER_COLORS = [
   '#6366f1', '#8b5cf6', '#ec4899', '#f59e0b',
   '#10b981', '#06b6d4', '#3b82f6', '#f97316',
@@ -53,6 +82,7 @@ async function getDirItems(dirPath: string): Promise<DiskItem[]> {
     const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
     const items: DiskItem[] = [];
     for (const e of entries) {
+      if (IGNORED_DIRECTORIES.has(e.name.toLowerCase())) continue;
       let isDir = e.isDirectory();
       if (!isDir && (e.isSymbolicLink() || (typeof e.isBlockDevice === 'function' && !e.isFile()))) {
         try {
@@ -148,7 +178,8 @@ async function parseServerLessonsInDir(
     const ext = getFileExtension(file.name);
     const rel = `${moduleRelPath}/${file.name}`;
 
-    if (VIDEO_EXTENSIONS.has(ext)) {
+    const isVid = await isVideoFilePath(file.fullPath, file.name);
+    if (isVid) {
       const stem = file.name.replace(/\.[a-zA-Z0-9]+$/, '').toLowerCase().trim();
       const existing = groups.get(stem) || { name: file.name, subtitles: [], attachments: [] };
       existing.videoFile = file.name;
@@ -182,7 +213,8 @@ async function parseServerLessonsInDir(
       for (const file of nestedItems.filter((i) => !i.isDir && !i.name.startsWith('.'))) {
         const ext = getFileExtension(file.name);
         const rel = `${moduleRelPath}/${vSub.name}/${file.name}`;
-        if (VIDEO_EXTENSIONS.has(ext)) {
+        const isNestedVid = await isVideoFilePath(file.fullPath, file.name);
+        if (isNestedVid) {
           const stem = file.name.replace(/\.[a-zA-Z0-9]+$/, '').toLowerCase().trim();
           const existing = groups.get(stem) || { name: file.name, subtitles: [], attachments: [] };
           existing.videoFile = `${vSub.name}/${file.name}`;
@@ -488,20 +520,25 @@ export async function scanServerDirectory(coursesDir: string): Promise<{
     const rootCourse = await parseServerCourse(
       coursesDir,
       path.basename(coursesDir) || 'Local Course',
-      '.',
+      '_root_',
       undefined,
       undefined
     );
     if (rootCourse) scannedCourses.push(rootCourse);
   }
 
-  // Recursive deep scan fallback: if shallow scans found 0 courses,
+  // Recursive deep scan fallback: if shallow scans found 0 courses or 0 lessons,
   // walk all directory levels to discover and auto-organize all videos
-  if (scannedCourses.length === 0) {
-    console.log('[ServerScanner] Shallow scan found 0 courses, running deep recursive scan on:', coursesDir);
+  const totalLessonsFound = scannedCourses.reduce((acc, c) => acc + c.totalLessons, 0);
+  if (scannedCourses.length === 0 || totalLessonsFound === 0) {
+    console.log('[ServerScanner] Shallow scan found no playable lessons, running deep recursive scan on:', coursesDir);
     const deepResult = await deepScanServerCourses(coursesDir);
-    scannedCourses.push(...deepResult.courses);
-    scannedClusters.push(...deepResult.clusters);
+    if (deepResult.courses.length > 0) {
+      scannedCourses.length = 0;
+      scannedClusters.length = 0;
+      scannedCourses.push(...deepResult.courses);
+      scannedClusters.push(...deepResult.clusters);
+    }
   }
 
   return { courses: scannedCourses, clusters: scannedClusters, libraryState };
@@ -528,9 +565,10 @@ async function collectAllFiles(
 
   for (const item of items) {
     if (item.name.startsWith('.')) continue;
+    if (IGNORED_DIRECTORIES.has(item.name.toLowerCase())) continue;
 
     if (item.isDir) {
-      if (isResourceDirectoryName(item.name)) continue;
+      // NOTE: Do not skip isResourceDirectoryName! Deep search checks all non-ignored folders.
       const nextRel = relDir ? `${relDir}/${item.name}` : item.name;
       const nested = await collectAllFiles(item.fullPath, nextRel, depth + 1, maxDepth);
       files.push(...nested);
@@ -556,7 +594,17 @@ async function deepScanServerCourses(coursesDir: string): Promise<{
   clusters: ScannedCluster[];
 }> {
   const allFiles = await collectAllFiles(coursesDir, '');
-  const videoFiles = allFiles.filter((f) => VIDEO_EXTENSIONS.has(f.ext));
+  const candidateVideos = allFiles.filter((f) => !f.name.endsWith('.d.ts') && VIDEO_EXTENSIONS.has(f.ext));
+  const videoFiles: DiscoveredFile[] = [];
+  for (const f of candidateVideos) {
+    if (f.ext === 'ts') {
+      if (await isMpegTsFile(f.fullPath)) {
+        videoFiles.push(f);
+      }
+    } else {
+      videoFiles.push(f);
+    }
+  }
   if (videoFiles.length === 0) {
     return { courses: [], clusters: [] };
   }
@@ -581,20 +629,20 @@ async function deepScanServerCourses(coursesDir: string): Promise<{
   for (const v of videoFiles) {
     const parts = v.relDir === '.' ? [] : v.relDir.split('/');
 
-    let courseKey = '.';
+    let courseKey = '_root_';
     let courseTitle = path.basename(coursesDir) || 'Local Course';
     let clusterId: string | undefined;
     let clusterName: string | undefined;
-    let moduleKey = '.';
+    let moduleKey = '_root_';
     let moduleTitle = 'Course Curriculum';
     let courseFullPath = coursesDir;
     let moduleFullPath = coursesDir;
 
     if (parts.length === 0) {
       // Direct video in root
-      courseKey = '.';
+      courseKey = '_root_';
       courseTitle = path.basename(coursesDir) || 'Local Course';
-      moduleKey = '.';
+      moduleKey = '_root_';
       moduleTitle = 'Course Curriculum';
       courseFullPath = coursesDir;
       moduleFullPath = coursesDir;
@@ -696,7 +744,7 @@ async function deepScanServerCourses(coursesDir: string): Promise<{
       for (const f of dirEntries) {
         if (COVER_NAMES.has(f.toLowerCase())) {
           coverUrl = `/api/local/attachment?path=${encodeURIComponent(
-            bucket.courseKey === '.' ? f : `${bucket.courseKey}/${f}`
+            bucket.courseKey === '.' || bucket.courseKey === '_root_' ? f : `${bucket.courseKey}/${f}`
           )}`;
           break;
         }
@@ -745,7 +793,7 @@ async function deepScanServerCourses(coursesDir: string): Promise<{
           title,
           rawTitle: v.name,
           orderIndex: orderIndex !== 9999 ? orderIndex : lesFallbackOrder++,
-          relativePath: v.relPath,
+          relativePath: bucket.courseKey === '_root_' ? v.name : v.relPath,
           coursePath: bucket.courseKey,
           modulePath: mod.moduleKey,
           isVideo: true,
@@ -783,7 +831,7 @@ async function deepScanServerCourses(coursesDir: string): Promise<{
       for (const m of courseModules) totalLessons += m.lessons.length;
 
       const course: ScannedCourse = {
-        id: `course-${bucket.courseKey}`,
+        id: bucket.courseKey === '_root_' ? 'course-root' : `course-${bucket.courseKey}`,
         title: bucket.courseTitle,
         rawTitle: bucket.courseTitle,
         relativePath: bucket.courseKey,

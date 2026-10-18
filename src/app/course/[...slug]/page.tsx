@@ -55,6 +55,7 @@ function CoursePlayerContent({ params }: CoursePageProps) {
   const course = useMemo(() => {
     return (
       scannedCourses.find((c) => c.relativePath === coursePath) ||
+      scannedCourses.find((c) => (coursePath === '_root_' || coursePath === '.') && (c.relativePath === '_root_' || c.relativePath === '.')) ||
       scannedCourses.find((c) => c.title.toLowerCase() === coursePath.toLowerCase())
     );
   }, [scannedCourses, coursePath]);

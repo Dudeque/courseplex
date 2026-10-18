@@ -17,7 +17,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Missing path parameter' }, { status: 400 });
   }
 
-  const normalized = path.normalize(relativePath).replace(/^(\.\.[\/\\])+/, '');
+  const cleanRel = relativePath.replace(/^_root_[\/\\]/, '');
+  const normalized = path.normalize(cleanRel).replace(/^(\.\.[\/\\])+/, '');
   const fullPath = path.resolve(rootDir, normalized);
   const rootResolved = path.resolve(rootDir);
 
@@ -39,6 +40,16 @@ export async function GET(req: NextRequest) {
       webm: 'video/webm',
       mkv: 'video/webm',
       mov: 'video/quicktime',
+      avi: 'video/x-msvideo',
+      wmv: 'video/x-ms-wmv',
+      flv: 'video/x-flv',
+      ts: 'video/mp2t',
+      m2ts: 'video/mp2t',
+      mpg: 'video/mpeg',
+      mpeg: 'video/mpeg',
+      vob: 'video/x-ms-vob',
+      ogv: 'video/ogg',
+      '3gp': 'video/3gpp',
       mp3: 'audio/mpeg',
       wav: 'audio/wav',
       ogg: 'audio/ogg',
