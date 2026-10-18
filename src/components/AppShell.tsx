@@ -116,8 +116,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         const selected = await window.electronAPI.selectDirectory();
         if (selected) {
           await connectServerDirectory(selected);
-          return;
         }
+        return;
       } catch (err) {
         console.warn('Native folder selection fallback:', err);
       }

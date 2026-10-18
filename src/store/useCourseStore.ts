@@ -467,8 +467,10 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
     set({ isScanning: true, scanStatus: 'Scanning courses on server disk...' });
     try {
       const res = await fetch('/api/local/courses');
-      if (!res.ok) throw new Error('Failed to scan server courses');
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to scan server courses');
+      }
 
       const dirName = data.coursesDir
         ? data.coursesDir.split(/[\\/]/).filter(Boolean).pop() || data.coursesDir

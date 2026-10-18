@@ -210,28 +210,6 @@ function createWindow() {
     },
   });
 
-  // Native File dialog handler
-  ipcMain.handle('dialog:selectDirectory', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
-      title: 'Select Courses Folder',
-      properties: ['openDirectory'],
-    });
-    if (result.canceled || result.filePaths.length === 0) {
-      return null;
-    }
-    return result.filePaths[0];
-  });
-
-  ipcMain.handle('window:minimize', () => mainWindow?.minimize());
-  ipcMain.handle('window:maximize', () => {
-    if (mainWindow?.isMaximized()) {
-      mainWindow.unmaximize();
-    } else {
-      mainWindow?.maximize();
-    }
-  });
-  ipcMain.handle('window:close', () => mainWindow?.close());
-
   // F12 DevTools toggle shortcut
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.key === 'F12' && input.type === 'keyDown') {
@@ -400,7 +378,51 @@ function setupAutoUpdater() {
   });
 }
 
+function registerIpcHandlers() {
+  ipcMain.handle('dialog:selectDirectory', async (event) => {
+    try {
+      const win = BrowserWindow.fromWebContents(event.sender) || mainWindow || BrowserWindow.getFocusedWindow();
+      if (win && !win.isDestroyed()) {
+        win.focus();
+      }
+      const result = await dialog.showOpenDialog(win, {
+        title: 'Select Courses Folder',
+        properties: ['openDirectory'],
+      });
+      console.log('[Main] dialog:selectDirectory result:', result);
+      if (result.canceled || result.filePaths.length === 0) {
+        return null;
+      }
+      return result.filePaths[0];
+    } catch (err) {
+      console.error('[Main] Error in dialog:selectDirectory:', err);
+      return null;
+    }
+  });
+
+  ipcMain.handle('window:minimize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    win?.minimize();
+  });
+
+  ipcMain.handle('window:maximize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    if (win?.isMaximized()) {
+      win.unmaximize();
+    } else {
+      win?.maximize();
+    }
+  });
+
+  ipcMain.handle('window:close', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    win?.close();
+  });
+}
+
 app.whenReady().then(async () => {
+  registerIpcHandlers();
+
   if (app.isPackaged) {
     try {
       await startProductionServer();

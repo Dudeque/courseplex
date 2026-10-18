@@ -18,7 +18,7 @@ import {
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
-const VIDEO_EXTENSIONS = new Set(['mp4', 'mkv', 'webm', 'mov', 'm4v']);
+const VIDEO_EXTENSIONS = new Set(['mp4', 'mkv', 'webm', 'mov', 'm4v', 'avi', 'wmv', 'flv', 'ts', '3gp']);
 const SUBTITLE_EXTENSIONS = new Set(['srt', 'vtt']);
 const ATTACHMENT_EXTENSIONS = new Set([
   'zip', 'tar', 'gz', '7z', 'rar', 'tgz', 'bz2', 'xz',
@@ -49,11 +49,23 @@ interface DiskItem {
 async function getDirItems(dirPath: string): Promise<DiskItem[]> {
   try {
     const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
-    const items: DiskItem[] = entries.map((e) => ({
-      name: e.name,
-      isDir: e.isDirectory(),
-      fullPath: path.join(dirPath, e.name),
-    }));
+    const items: DiskItem[] = [];
+    for (const e of entries) {
+      let isDir = e.isDirectory();
+      if (!isDir && (e.isSymbolicLink() || (typeof e.isBlockDevice === 'function' && !e.isFile()))) {
+        try {
+          const stat = await fs.promises.stat(path.join(dirPath, e.name));
+          isDir = stat.isDirectory();
+        } catch {
+          // ignore stat errors
+        }
+      }
+      items.push({
+        name: e.name,
+        isDir,
+        fullPath: path.join(dirPath, e.name),
+      });
+    }
     return items.sort((a, b) => collator.compare(a.name, b.name));
   } catch (err) {
     console.warn(`Could not read directory ${dirPath}:`, err);
@@ -157,6 +169,31 @@ async function parseServerLessonsInDir(
         type: getAttachmentType(file.name),
         relativePath: rel,
       });
+    }
+  }
+
+  // If no direct videos were found in module root, check non-resource subdirectories (e.g. Videos/, Content/)
+  if (!Array.from(groups.values()).some((g) => g.videoFile)) {
+    const videoSubDirs = subDirs.filter((d) => !isResourceDirectoryName(d.name));
+    for (const vSub of videoSubDirs) {
+      const nestedItems = await getDirItems(vSub.fullPath);
+      for (const file of nestedItems.filter((i) => !i.isDir && !i.name.startsWith('.'))) {
+        const ext = getFileExtension(file.name);
+        const rel = `${moduleRelPath}/${vSub.name}/${file.name}`;
+        if (VIDEO_EXTENSIONS.has(ext)) {
+          const stem = file.name.replace(/\.[a-zA-Z0-9]+$/, '').toLowerCase().trim();
+          const existing = groups.get(stem) || { name: file.name, subtitles: [], attachments: [] };
+          existing.videoFile = `${vSub.name}/${file.name}`;
+          groups.set(stem, existing);
+        } else if (SUBTITLE_EXTENSIONS.has(ext)) {
+          const langMatch = file.name.match(/\.(en|es|fr|de|pt|ru|zh|ja|ko)\.(srt|vtt)$/i);
+          const lang = langMatch ? langMatch[1].toLowerCase() : 'en';
+          const stem = file.name.replace(/\.(en|es|fr|de|pt|ru|zh|ja|ko)?\.[a-zA-Z0-9]+$/, '').toLowerCase().trim();
+          const existing = groups.get(stem) || { name: file.name, subtitles: [], attachments: [] };
+          existing.subtitles.push({ name: file.name, lang, relativePath: rel });
+          groups.set(stem, existing);
+        }
+      }
     }
   }
 

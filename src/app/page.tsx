@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, useState } from 'react';
 import { useCourseStore } from '@/store/useCourseStore';
 import { OnDeckHero } from '@/components/OnDeckHero';
 import { CourseCard } from '@/components/CourseCard';
@@ -19,14 +19,20 @@ import {
   Star,
   SlidersHorizontal,
   AlertCircle,
+  Loader2,
 } from 'lucide-react';
 
 export default function HomePage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   const {
     isServerMode,
+    serverCoursesDir,
     connectServerDirectory,
+    rescanServerDirectory,
+    disconnectServerDirectory,
     setFolderModalOpen,
     rootDirHandle,
     rootDirName,
@@ -53,17 +59,30 @@ export default function HomePage() {
   } = useCourseStore();
 
   const handleConnectServerFolder = async () => {
+    setConnectError(null);
+    setIsConnecting(true);
+
     if (typeof window !== 'undefined' && window.electronAPI?.selectDirectory) {
       try {
         const selected = await window.electronAPI.selectDirectory();
         if (selected) {
           await connectServerDirectory(selected);
+          setIsConnecting(false);
           return;
         }
-      } catch (err) {
+        // User closed or cancelled native picker
+        setIsConnecting(false);
+        return;
+      } catch (err: unknown) {
         console.warn('Native folder selection fallback:', err);
+        const msg = err instanceof Error ? err.message : 'Could not connect folder';
+        setConnectError(msg);
+        setIsConnecting(false);
+        return;
       }
     }
+
+    setIsConnecting(false);
     setFolderModalOpen(true);
   };
 
@@ -151,8 +170,68 @@ export default function HomePage() {
         className="hidden"
       />
 
-      {/* Welcome Hero when no courses are loaded */}
-      {!isDemoMode && scannedCourses.length === 0 ? (
+      {/* Error alert banner */}
+      {connectError && (
+        <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-200 text-sm flex items-center justify-between gap-3 shadow-lg">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
+            <span>{connectError}</span>
+          </div>
+          <button
+            onClick={() => setConnectError(null)}
+            className="px-2.5 py-1 rounded-lg text-xs bg-red-500/20 hover:bg-red-500/30 text-red-300 transition-colors cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Connected to Server Folder, but 0 courses found */}
+      {isServerMode && !isDemoMode && scannedCourses.length === 0 ? (
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#121626] via-[#161a30] to-[#0d101a] border border-amber-500/30 p-8 md:p-12 shadow-2xl space-y-4">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold">
+            <AlertCircle className="w-3.5 h-3.5" />
+            <span>0 Courses Recognized</span>
+          </div>
+          <h2 className="text-2xl md:text-3xl font-black text-white tracking-tight leading-tight">
+            Connected to Local Server Folder
+          </h2>
+          <p className="text-xs font-mono text-amber-300/80 bg-black/30 p-3 rounded-xl border border-white/5 break-all">
+            {serverCoursesDir}
+          </p>
+          <p className="text-sm text-gray-300 leading-relaxed max-w-2xl">
+            We scanned this directory, but found no video files (.mp4, .mkv, .webm, .mov, .avi).
+            Ensure your folder contains course folders with video files, or choose another folder.
+          </p>
+          <div className="flex flex-wrap items-center gap-3 pt-3">
+            <button
+              onClick={() => rescanServerDirectory()}
+              disabled={isScanning}
+              className="px-5 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-lg shadow-amber-500/20 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              <FolderSync className={`w-4 h-4 ${isScanning ? 'animate-spin' : ''}`} />
+              <span>{isScanning ? 'Rescanning...' : 'Rescan Folder'}</span>
+            </button>
+            <button
+              onClick={handleConnectServerFolder}
+              disabled={isConnecting}
+              className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              <HardDrive className="w-4 h-4" />
+              <span>Change Server Folder</span>
+            </button>
+            <button
+              onClick={() => disconnectServerDirectory()}
+              className="px-4 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-semibold border border-white/10 transition-all cursor-pointer"
+            >
+              <span>Disconnect</span>
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Welcome Hero when no courses are loaded and not in server mode */}
+      {!isServerMode && !isDemoMode && scannedCourses.length === 0 ? (
         <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#121626] via-[#161a30] to-[#0d101a] border border-indigo-500/20 p-8 md:p-12 shadow-2xl">
           <div className="relative z-10 max-w-2xl space-y-4">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-semibold">
@@ -171,10 +250,20 @@ export default function HomePage() {
             <div className="flex flex-wrap items-center gap-3 pt-4">
               <button
                 onClick={handleConnectServerFolder}
-                className="px-6 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/30 transition-all flex items-center gap-2 hover:scale-105 cursor-pointer"
+                disabled={isConnecting || isScanning}
+                className="px-6 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-sm shadow-xl shadow-indigo-600/30 transition-all flex items-center gap-2 hover:scale-105 cursor-pointer"
               >
-                <HardDrive className="w-4 h-4" />
-                <span>Connect Server Folder (Recommended)</span>
+                {isConnecting || isScanning ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>{scanStatus || 'Connecting...'}</span>
+                  </>
+                ) : (
+                  <>
+                    <HardDrive className="w-4 h-4" />
+                    <span>Connect Server Folder (Recommended)</span>
+                  </>
+                )}
               </button>
 
               <button

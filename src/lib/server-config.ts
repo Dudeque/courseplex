@@ -57,7 +57,8 @@ export async function getLocalCoursesDir(): Promise<string | null> {
 }
 
 export async function setLocalCoursesDir(dirPath: string): Promise<string> {
-  const resolved = path.resolve(dirPath.trim());
+  const cleaned = dirPath.replace(/^["']|["']$/g, '').trim();
+  const resolved = path.resolve(cleaned);
   const stat = await fs.promises.stat(/*turbopackIgnore: true*/ resolved);
   if (!stat.isDirectory()) {
     throw new Error('Path is not a valid directory');

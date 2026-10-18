@@ -71,7 +71,8 @@ export function ServerFolderModal() {
 
   const handleConnect = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pathInput.trim()) {
+    const cleanPath = pathInput.replace(/^["']|["']$/g, '').trim();
+    if (!cleanPath) {
       setError('Please enter a folder path');
       return;
     }
@@ -81,7 +82,7 @@ export function ServerFolderModal() {
     setSuccess(null);
 
     try {
-      await connectServerDirectory(pathInput.trim());
+      await connectServerDirectory(cleanPath);
       setSuccess('Connected successfully! Scanning your courses...');
       setTimeout(() => {
         setFolderModalOpen(false);
