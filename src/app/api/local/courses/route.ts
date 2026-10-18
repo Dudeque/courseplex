@@ -2,7 +2,18 @@ import { NextResponse } from 'next/server';
 import { getLocalCoursesDir } from '@/lib/server-config';
 import { scanServerDirectory } from '@/lib/server-scanner';
 
+
 export async function GET() {
+  if (process.env.VERCEL) {
+    return NextResponse.json({
+      configured: false,
+      courses: [],
+      clusters: [],
+      libraryState: null,
+      coursesDir: null,
+      isVercel: true,
+    });
+  }
   const dir = await getLocalCoursesDir();
   if (!dir) {
     return NextResponse.json({

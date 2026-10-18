@@ -4,6 +4,7 @@ import path from 'node:path';
 import { getLocalCoursesDir } from '@/lib/server-config';
 import { convertSrtTextToVtt } from '@/lib/subtitles';
 
+
 export async function GET(req: NextRequest) {
   const rootDir = await getLocalCoursesDir();
   if (!rootDir) {

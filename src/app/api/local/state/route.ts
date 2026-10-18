@@ -4,7 +4,11 @@ import path from 'node:path';
 import { getLocalCoursesDir } from '@/lib/server-config';
 import { CourseLibraryState } from '@/types/course';
 
+
 export async function GET() {
+  if (process.env.VERCEL) {
+    return NextResponse.json({ state: null, isVercel: true });
+  }
   const rootDir = await getLocalCoursesDir();
   if (!rootDir) {
     return NextResponse.json({ error: 'Courses directory not configured' }, { status: 400 });

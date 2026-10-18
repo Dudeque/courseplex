@@ -4,6 +4,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { getLocalCoursesDir } from '@/lib/server-config';
 
+
 export async function GET(req: NextRequest) {
   const rootDir = await getLocalCoursesDir();
   if (!rootDir) {

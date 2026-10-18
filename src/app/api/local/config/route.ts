@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getLocalCoursesDir, setLocalCoursesDir, clearLocalCoursesDir } from '@/lib/server-config';
 
+
 export async function GET() {
+  if (process.env.VERCEL) {
+    return NextResponse.json({
+      coursesDir: null,
+      configured: false,
+      isVercel: true,
+    });
+  }
   const dir = await getLocalCoursesDir();
   return NextResponse.json({
     coursesDir: dir,
@@ -10,6 +18,12 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  if (process.env.VERCEL) {
+    return NextResponse.json(
+      { error: 'Server streaming mode is only available when running locally on your computer' },
+      { status: 400 }
+    );
+  }
   try {
     const body = await req.json();
     const { coursesDir } = body;
