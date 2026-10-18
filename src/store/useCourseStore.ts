@@ -238,7 +238,7 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
       const serverRes = await fetch('/api/local/courses');
       if (serverRes.ok) {
         const data = await serverRes.json();
-        if (data.configured && data.courses && data.courses.length > 0) {
+        if (data.configured) {
           const dirName = data.coursesDir
             ? data.coursesDir.split(/[\\/]/).filter(Boolean).pop() || data.coursesDir
             : 'Local Courses';
@@ -247,7 +247,7 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
             isServerMode: true,
             serverCoursesDir: data.coursesDir,
             rootDirName: dirName,
-            scannedCourses: data.courses,
+            scannedCourses: data.courses || [],
             scannedClusters: data.clusters || [],
             libraryState: data.libraryState || createDefaultLibraryState(),
             permissionGranted: true,

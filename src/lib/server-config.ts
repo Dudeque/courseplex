@@ -1,7 +1,26 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 
-const PROJECT_CONFIG_FILE = path.join(process.cwd(), '.courseplex-config.json');
+function getConfigDir(): string {
+  if (process.env.COURSEPLEX_USER_DATA && process.env.COURSEPLEX_USER_DATA.trim()) {
+    return process.env.COURSEPLEX_USER_DATA.trim();
+  }
+  if (process.platform === 'win32' && process.env.APPDATA) {
+    return path.join(process.env.APPDATA, 'CoursePlex');
+  }
+  return path.join(os.homedir(), '.courseplex');
+}
+
+function getCandidateConfigFilePaths(): string[] {
+  const primaryDir = getConfigDir();
+  return [
+    path.join(primaryDir, 'courseplex-config.json'),
+    path.join(primaryDir, '.courseplex-config.json'),
+    path.join(os.homedir(), '.courseplex', 'config.json'),
+    path.join(process.cwd(), '.courseplex-config.json'),
+  ];
+}
 
 export async function getLocalCoursesDir(): Promise<string | null> {
   // 1. Check environment variable
@@ -15,20 +34,23 @@ export async function getLocalCoursesDir(): Promise<string | null> {
     }
   }
 
-  // 2. Check local project config file
-  try {
-    if (fs.existsSync(PROJECT_CONFIG_FILE)) {
-      const raw = await fs.promises.readFile(PROJECT_CONFIG_FILE, 'utf-8');
-      const data = JSON.parse(raw);
-      if (data.coursesDir && typeof data.coursesDir === 'string') {
-        const stat = await fs.promises.stat(data.coursesDir);
-        if (stat.isDirectory()) {
-          return data.coursesDir;
+  // 2. Check config files in candidate locations
+  const candidatePaths = getCandidateConfigFilePaths();
+  for (const configPath of candidatePaths) {
+    try {
+      if (fs.existsSync(/*turbopackIgnore: true*/ configPath)) {
+        const raw = await fs.promises.readFile(/*turbopackIgnore: true*/ configPath, 'utf-8');
+        const data = JSON.parse(raw);
+        if (data.coursesDir && typeof data.coursesDir === 'string') {
+          const stat = await fs.promises.stat(/*turbopackIgnore: true*/ data.coursesDir);
+          if (stat.isDirectory()) {
+            return data.coursesDir;
+          }
         }
       }
+    } catch {
+      // Continue checking next candidate path
     }
-  } catch {
-    // Ignore read errors
   }
 
   return null;
@@ -36,13 +58,17 @@ export async function getLocalCoursesDir(): Promise<string | null> {
 
 export async function setLocalCoursesDir(dirPath: string): Promise<string> {
   const resolved = path.resolve(dirPath.trim());
-  const stat = await fs.promises.stat(resolved);
+  const stat = await fs.promises.stat(/*turbopackIgnore: true*/ resolved);
   if (!stat.isDirectory()) {
     throw new Error('Path is not a valid directory');
   }
 
+  const primaryDir = getConfigDir();
+  await fs.promises.mkdir(primaryDir, { recursive: true });
+  const targetFile = path.join(primaryDir, 'courseplex-config.json');
+
   await fs.promises.writeFile(
-    PROJECT_CONFIG_FILE,
+    /*turbopackIgnore: true*/ targetFile,
     JSON.stringify({ coursesDir: resolved, updatedAt: new Date().toISOString() }, null, 2),
     'utf-8'
   );
@@ -51,7 +77,15 @@ export async function setLocalCoursesDir(dirPath: string): Promise<string> {
 }
 
 export async function clearLocalCoursesDir(): Promise<void> {
-  if (fs.existsSync(PROJECT_CONFIG_FILE)) {
-    await fs.promises.unlink(PROJECT_CONFIG_FILE);
+  const candidatePaths = getCandidateConfigFilePaths();
+  for (const configPath of candidatePaths) {
+    try {
+      if (fs.existsSync(/*turbopackIgnore: true*/ configPath)) {
+        await fs.promises.unlink(/*turbopackIgnore: true*/ configPath);
+      }
+    } catch {
+      // Ignore deletion errors
+    }
   }
 }
+

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useSyncExternalStore } from 'react';
 import { useCourseStore } from '@/store/useCourseStore';
 import {
   HardDrive,
@@ -12,6 +12,8 @@ import {
   Trash2,
   Sparkles,
 } from 'lucide-react';
+
+const subscribeNoop = () => () => {};
 
 export function ServerFolderModal() {
   const {
@@ -34,31 +36,33 @@ export function ServerFolderModal() {
     setPathInput(serverCoursesDir || '');
   }
 
-  const isElectron =
-    typeof window !== 'undefined' &&
-    Boolean((window as unknown as { electronAPI?: { isElectron?: boolean } }).electronAPI?.isElectron);
+  const isElectron = useSyncExternalStore(
+    subscribeNoop,
+    () => Boolean(typeof window !== 'undefined' && window.electronAPI?.isElectron),
+    () => false
+  );
 
   const handleBrowseElectron = async () => {
-    const api = (window as unknown as { electronAPI?: { selectDirectory: () => Promise<string | null> } }).electronAPI;
+    const api = window.electronAPI;
     if (api?.selectDirectory) {
-      const selected = await api.selectDirectory();
-      if (selected) {
-        setPathInput(selected);
-        setLoading(true);
-        setError(null);
-        setSuccess(null);
-        try {
+      try {
+        const selected = await api.selectDirectory();
+        if (selected) {
+          setPathInput(selected);
+          setLoading(true);
+          setError(null);
+          setSuccess(null);
           await connectServerDirectory(selected);
           setSuccess(`Connected: ${selected}`);
           setTimeout(() => {
             setFolderModalOpen(false);
           }, 1200);
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : 'Failed to connect folder';
-          setError(msg);
-        } finally {
-          setLoading(false);
         }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Failed to connect folder';
+        setError(msg);
+      } finally {
+        setLoading(false);
       }
     }
   };

@@ -137,16 +137,19 @@ async function startProductionServer() {
 
   // Launch background server
   try {
+    const serverEnv = {
+      ...process.env,
+      COURSEPLEX_USER_DATA: app.getPath('userData'),
+      PORT: activePort.toString(),
+      HOSTNAME: '127.0.0.1',
+      NODE_ENV: 'production',
+    };
+
     if (utilityProcess && typeof utilityProcess.fork === 'function') {
       console.log('[Main] Starting background Next.js server via utilityProcess...');
       serverProcess = utilityProcess.fork(serverPath, [], {
         cwd: standaloneDir,
-        env: {
-          ...process.env,
-          PORT: activePort.toString(),
-          HOSTNAME: '127.0.0.1',
-          NODE_ENV: 'production',
-        },
+        env: serverEnv,
         stdio: 'pipe',
       });
 
@@ -168,6 +171,7 @@ async function startProductionServer() {
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
+        COURSEPLEX_USER_DATA: app.getPath('userData'),
         PORT: activePort.toString(),
         HOSTNAME: '127.0.0.1',
         NODE_ENV: 'production',
@@ -331,7 +335,15 @@ function createWindow() {
                 });
               }
             } catch (err) {
-              dialog.showErrorBox('Update Check Failed', err ? err.message : 'Unknown error');
+              const msg = err ? err.message : 'Unknown error';
+              if (msg.includes('404')) {
+                dialog.showErrorBox(
+                  'Update Check Failed (404 Not Found)',
+                  'GitHub releases returned 404 Not Found.\n\nBecause the repository is currently Private, GitHub conceals release downloads from unauthenticated apps.\n\nSetting the Dudeque/courseplex repository to Public will allow seamless automatic updates.'
+                );
+              } else {
+                dialog.showErrorBox('Update Check Failed', msg);
+              }
             }
           },
         },

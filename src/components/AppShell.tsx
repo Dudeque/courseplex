@@ -73,6 +73,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const {
+    connectServerDirectory,
     init,
     isInitialized,
     isServerMode,
@@ -95,6 +96,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     init();
   }, [init]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.electronAPI?.onDirectorySelected) {
+      const unsubscribe = window.electronAPI.onDirectorySelected(async (dirPath) => {
+        try {
+          await connectServerDirectory(dirPath);
+        } catch (err) {
+          console.error('Failed to connect directory from electron menu:', err);
+        }
+      });
+      return unsubscribe;
+    }
+  }, [connectServerDirectory]);
+
+  const handleConnectServerFolder = async () => {
+    if (typeof window !== 'undefined' && window.electronAPI?.selectDirectory) {
+      try {
+        const selected = await window.electronAPI.selectDirectory();
+        if (selected) {
+          await connectServerDirectory(selected);
+          return;
+        }
+      } catch (err) {
+        console.warn('Native folder selection fallback:', err);
+      }
+    }
+    setFolderModalOpen(true);
+  };
 
   const todayStr = typeof window !== 'undefined' ? new Date().toISOString().slice(0, 10) : '';
   const todaySessions = todayStr ? libraryState.studySessions.filter((s) => s.date === todayStr) : [];
@@ -306,7 +335,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           ) : (
             <div className="flex flex-col gap-2">
               <button
-                onClick={() => setFolderModalOpen(true)}
+                onClick={handleConnectServerFolder}
                 className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <HardDrive className="w-3.5 h-3.5" />

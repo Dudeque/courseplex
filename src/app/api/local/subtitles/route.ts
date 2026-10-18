@@ -21,7 +21,8 @@ export async function GET(req: NextRequest) {
   const fullPath = path.resolve(rootDir, normalized);
   const rootResolved = path.resolve(rootDir);
 
-  if (!fullPath.startsWith(rootResolved)) {
+  const relative = path.relative(rootResolved, fullPath);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
     return NextResponse.json({ error: 'Access denied' }, { status: 403 });
   }
 

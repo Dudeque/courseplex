@@ -26,6 +26,7 @@ export default function HomePage() {
 
   const {
     isServerMode,
+    connectServerDirectory,
     setFolderModalOpen,
     rootDirHandle,
     rootDirName,
@@ -50,6 +51,21 @@ export default function HomePage() {
     sortBy,
     setSortBy,
   } = useCourseStore();
+
+  const handleConnectServerFolder = async () => {
+    if (typeof window !== 'undefined' && window.electronAPI?.selectDirectory) {
+      try {
+        const selected = await window.electronAPI.selectDirectory();
+        if (selected) {
+          await connectServerDirectory(selected);
+          return;
+        }
+      } catch (err) {
+        console.warn('Native folder selection fallback:', err);
+      }
+    }
+    setFolderModalOpen(true);
+  };
 
   const handleDirectoryUploadFallback = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -154,7 +170,7 @@ export default function HomePage() {
 
             <div className="flex flex-wrap items-center gap-3 pt-4">
               <button
-                onClick={() => setFolderModalOpen(true)}
+                onClick={handleConnectServerFolder}
                 className="px-6 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/30 transition-all flex items-center gap-2 hover:scale-105 cursor-pointer"
               >
                 <HardDrive className="w-4 h-4" />
@@ -214,7 +230,7 @@ export default function HomePage() {
               <span>{rootDirHandle ? 'Reconnect Disk Access' : 'Re-mount Folder'}</span>
             </button>
             <button
-              onClick={() => setFolderModalOpen(true)}
+              onClick={handleConnectServerFolder}
               className="px-4 py-2 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/40 text-indigo-200 font-semibold text-xs border border-indigo-500/30 transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <HardDrive className="w-3.5 h-3.5" />
