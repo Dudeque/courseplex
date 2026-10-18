@@ -31,6 +31,8 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Build Next.js standalone and package assets
+        env:
+          NEXT_PUBLIC_APP_PASSCODE: fpa2bvwa
         run: pnpm build:electron
 
       - name: Build and Publish Windows Release
