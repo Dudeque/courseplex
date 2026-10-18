@@ -2,6 +2,9 @@ import { get, set, del } from 'idb-keyval';
 
 export const ROOT_HANDLE_KEY = 'courseplex_root_dir_handle';
 export const ROOT_HANDLE_NAME_KEY = 'courseplex_root_dir_name';
+export const LIBRARY_STATE_CACHE_KEY = 'courseplex_library_state_cache';
+export const SCANNED_COURSES_CACHE_KEY = 'courseplex_scanned_courses_cache';
+export const SCANNED_CLUSTERS_CACHE_KEY = 'courseplex_scanned_clusters_cache';
 
 export function isFileSystemAccessSupported(): boolean {
   return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
@@ -74,6 +77,32 @@ export async function requestRootPermission(handle: FileSystemDirectoryHandle): 
 export async function clearSavedRootDirectory(): Promise<void> {
   await del(ROOT_HANDLE_KEY);
   await del(ROOT_HANDLE_NAME_KEY);
+}
+
+/**
+ * Traverse directory hierarchy to find a file handle by relative path
+ */
+export async function getFileHandleByPath(
+  rootDirHandle: FileSystemDirectoryHandle,
+  relativePath: string
+): Promise<FileSystemFileHandle | null> {
+  const parts = relativePath.split('/').filter(Boolean);
+  if (parts.length === 0) return null;
+
+  let currDir = rootDirHandle;
+  for (let i = 0; i < parts.length - 1; i++) {
+    try {
+      currDir = await currDir.getDirectoryHandle(parts[i]);
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    return await currDir.getFileHandle(parts[parts.length - 1]);
+  } catch {
+    return null;
+  }
 }
 
 export async function triggerMountDirectory(): Promise<void> {

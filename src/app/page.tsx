@@ -18,6 +18,7 @@ import {
   BookOpen,
   Star,
   SlidersHorizontal,
+  AlertCircle,
 } from 'lucide-react';
 
 export default function HomePage() {
@@ -132,8 +133,8 @@ export default function HomePage() {
         className="hidden"
       />
 
-      {/* Directory Connection Banner */}
-      {!rootDirHandle && !isDemoMode && scannedCourses.length === 0 ? (
+      {/* Welcome Hero when no courses are loaded */}
+      {!isDemoMode && scannedCourses.length === 0 ? (
         <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#121626] via-[#161a30] to-[#0d101a] border border-indigo-500/20 p-8 md:p-12 shadow-2xl">
           <div className="relative z-10 max-w-2xl space-y-4">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-semibold">
@@ -152,7 +153,7 @@ export default function HomePage() {
             <div className="flex flex-wrap items-center gap-3 pt-4">
               <button
                 onClick={() => triggerMountDirectory()}
-                className="px-6 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/30 transition-all flex items-center gap-2 hover:scale-105"
+                className="px-6 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/30 transition-all flex items-center gap-2 hover:scale-105 cursor-pointer"
               >
                 <HardDrive className="w-4 h-4" />
                 <span>Mount Local Courses Folder</span>
@@ -160,7 +161,7 @@ export default function HomePage() {
 
               <button
                 onClick={() => loadDemoMode()}
-                className="px-6 py-3.5 rounded-2xl bg-white/10 hover:bg-white/15 text-white font-semibold text-sm border border-white/10 transition-all flex items-center gap-2"
+                className="px-6 py-3.5 rounded-2xl bg-white/10 hover:bg-white/15 text-white font-semibold text-sm border border-white/10 transition-all flex items-center gap-2 cursor-pointer"
               >
                 <Sparkles className="w-4 h-4 text-purple-400" />
                 <span>Explore Demo Library</span>
@@ -168,7 +169,7 @@ export default function HomePage() {
 
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="px-4 py-3.5 rounded-2xl bg-white/5 hover:bg-white/10 text-gray-400 hover:text-gray-200 text-xs font-medium transition-all flex items-center gap-2"
+                className="px-4 py-3.5 rounded-2xl bg-white/5 hover:bg-white/10 text-gray-400 hover:text-gray-200 text-xs font-medium transition-all flex items-center gap-2 cursor-pointer"
                 title="Browser directory fallback for Safari/Firefox"
               >
                 <Upload className="w-4 h-4" />
@@ -177,24 +178,29 @@ export default function HomePage() {
             </div>
           </div>
         </div>
-      ) : rootDirHandle && !permissionGranted ? (
-        /* Permission Re-authentication Banner */
+      ) : null}
+
+      {/* Permission Re-authentication / Re-mount Banner (when courses exist in cache but permissions need gesture) */}
+      {!permissionGranted && !isDemoMode && scannedCourses.length > 0 ? (
         <div className="p-6 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="space-y-1">
-            <h3 className="font-bold text-amber-200 text-base">
-              Hard Drive Permission Required
+            <h3 className="font-bold text-amber-200 text-base flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>{rootDirHandle ? 'Hard Drive Permission Required' : 'Mount Course Folder to Stream'}</span>
             </h3>
             <p className="text-xs text-amber-300/80">
-              Browser security requires re-confirming permission to read &amp; sync &quot;{rootDirName || rootDirHandle.name}&quot;
-              on your disk.
+              {rootDirHandle
+                ? `Browser security requires re-confirming permission to read & sync "${rootDirName || rootDirHandle.name}" on your disk.`
+                : `Showing cached courses for "${rootDirName || 'your library'}". Click Re-mount Folder to stream videos directly.`}
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={() => reconnectDirectory()}
-              className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-lg shadow-amber-500/20 transition-all"
+              onClick={() => (rootDirHandle ? reconnectDirectory() : triggerMountDirectory())}
+              className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-lg shadow-amber-500/20 transition-all flex items-center gap-1.5 cursor-pointer"
             >
-              Reconnect Disk Access
+              <FolderSync className="w-4 h-4" />
+              <span>{rootDirHandle ? 'Reconnect Disk Access' : 'Re-mount Folder'}</span>
             </button>
           </div>
         </div>

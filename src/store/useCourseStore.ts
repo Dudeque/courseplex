@@ -7,11 +7,18 @@ import {
   LessonNote,
   LessonProgress,
 } from '@/types/course';
+import { get as getIdb, set as setIdb, del as delIdb } from 'idb-keyval';
 import {
   getSavedRootDirectory,
   pickAndSaveRootDirectory,
   requestRootPermission,
   clearSavedRootDirectory,
+  triggerMountDirectory,
+  getFileHandleByPath,
+  ROOT_HANDLE_NAME_KEY,
+  LIBRARY_STATE_CACHE_KEY,
+  SCANNED_COURSES_CACHE_KEY,
+  SCANNED_CLUSTERS_CACHE_KEY,
 } from '@/lib/fs-handle';
 import {
   createDefaultLibraryState,
@@ -92,12 +99,59 @@ interface CourseStoreState {
 
 let syncTimeout: NodeJS.Timeout | null = null;
 
+function serializeCoursesForCache(courses: ScannedCourse[]): ScannedCourse[] {
+  return courses.map((course) => ({
+    id: course.id,
+    title: course.title,
+    rawTitle: course.rawTitle,
+    relativePath: course.relativePath,
+    clusterId: course.clusterId,
+    clusterName: course.clusterName,
+    modules: course.modules.map((mod) => ({
+      id: mod.id,
+      title: mod.title,
+      rawTitle: mod.rawTitle,
+      orderIndex: mod.orderIndex,
+      relativePath: mod.relativePath,
+      lessons: mod.lessons.map((les) => ({
+        id: les.id,
+        title: les.title,
+        rawTitle: les.rawTitle,
+        orderIndex: les.orderIndex,
+        relativePath: les.relativePath,
+        coursePath: les.coursePath,
+        modulePath: les.modulePath,
+        isVideo: les.isVideo,
+        isResourceOnly: les.isResourceOnly,
+        durationSeconds: les.durationSeconds,
+        attachments: les.attachments.map((att) => ({
+          name: att.name,
+          type: att.type,
+          relativePath: att.relativePath,
+        })),
+        subtitleFiles: les.subtitleFiles?.map((sub) => ({
+          name: sub.name,
+          lang: sub.lang,
+        })),
+      })),
+    })),
+    totalLessons: course.totalLessons,
+    totalDurationSeconds: course.totalDurationSeconds,
+  }));
+}
+
 function scheduleDiskSync(
   rootDirHandle: FileSystemDirectoryHandle | null,
   state: CourseLibraryState,
   isDemoMode: boolean
 ) {
-  if (isDemoMode || !rootDirHandle) return;
+  if (isDemoMode) return;
+  // Always persist state immediately to IndexedDB
+  setIdb(LIBRARY_STATE_CACHE_KEY, state).catch((e) =>
+    console.warn('Background IDB cache error:', e)
+  );
+
+  if (!rootDirHandle) return;
   if (syncTimeout) clearTimeout(syncTimeout);
 
   syncTimeout = setTimeout(async () => {
@@ -147,6 +201,28 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
       }
     }
 
+    // 1. Restore cached state & course metadata from IndexedDB
+    try {
+      const cachedState = await getIdb<CourseLibraryState>(LIBRARY_STATE_CACHE_KEY);
+      const cachedCourses = await getIdb<ScannedCourse[]>(SCANNED_COURSES_CACHE_KEY);
+      const cachedClusters = await getIdb<ScannedCluster[]>(SCANNED_CLUSTERS_CACHE_KEY);
+      const savedName = await getIdb<string>(ROOT_HANDLE_NAME_KEY);
+
+      if (cachedCourses && cachedCourses.length > 0) {
+        set({
+          scannedCourses: cachedCourses,
+          scannedClusters: cachedClusters || [],
+          libraryState: cachedState || createDefaultLibraryState(),
+          rootDirName: savedName || 'Local Courses',
+        });
+      } else if (cachedState) {
+        set({ libraryState: cachedState });
+      }
+    } catch (err) {
+      console.warn('Could not restore cached library from IndexedDB:', err);
+    }
+
+    // 2. Check for FileSystemDirectoryHandle and query its permission
     try {
       const { handle, name, permissionState } = await getSavedRootDirectory();
       if (handle) {
@@ -158,15 +234,15 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
         });
 
         if (permissionState === 'granted') {
-          await get().rescanDirectory();
+          // Rescan silently in background to refresh live File handles
+          get().rescanDirectory().catch((e) => console.warn('Background rescan error:', e));
         }
         return;
       }
     } catch (e) {
-      console.warn('Initialization error:', e);
+      console.warn('Initialization handle check error:', e);
     }
 
-    // Default to initialized without handle
     set({ isInitialized: true });
   },
 
@@ -206,6 +282,12 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
         isScanning: false,
         scanStatus: '',
       });
+
+      // Cache metadata in IndexedDB
+      await setIdb(SCANNED_COURSES_CACHE_KEY, serializeCoursesForCache(courses));
+      await setIdb(SCANNED_CLUSTERS_CACHE_KEY, clusters);
+      await setIdb(LIBRARY_STATE_CACHE_KEY, diskState);
+      await setIdb(ROOT_HANDLE_NAME_KEY, handle.name);
 
       // Hydrate durations in background
       for (const course of courses) {
@@ -258,6 +340,9 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
 
   disconnectDirectory: async () => {
     await clearSavedRootDirectory();
+    await delIdb(SCANNED_COURSES_CACHE_KEY);
+    await delIdb(SCANNED_CLUSTERS_CACHE_KEY);
+    await delIdb(LIBRARY_STATE_CACHE_KEY);
     set({
       rootDirHandle: null,
       rootDirName: null,
@@ -295,6 +380,11 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
         scanStatus: '',
         isDemoMode: false,
       });
+
+      // Update IDB caches
+      await setIdb(SCANNED_COURSES_CACHE_KEY, serializeCoursesForCache(courses));
+      await setIdb(SCANNED_CLUSTERS_CACHE_KEY, clusters);
+      await setIdb(LIBRARY_STATE_CACHE_KEY, get().libraryState);
 
       // Hydrate durations
       for (const course of courses) {
@@ -346,20 +436,74 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
 
   scanFromInputFiles: async (files: FileList | File[]) => {
     set({ isScanning: true, scanStatus: 'Parsing files...' });
-    const { courses, clusters } = scanFileList(files, (status) => {
+    const fileArray = Array.from(files);
+    let inferredDirName = 'Local Course Folder';
+    for (const f of fileArray) {
+      if (f.webkitRelativePath) {
+        const parts = f.webkitRelativePath.split('/');
+        if (parts.length > 1) {
+          inferredDirName = parts[0];
+          break;
+        }
+      }
+    }
+
+    const { courses, clusters, sidecarState } = await scanFileList(files, (status) => {
       set({ scanStatus: status });
     });
 
+    let currentLibState = get().libraryState;
+    if (sidecarState) {
+      currentLibState = {
+        ...currentLibState,
+        ...sidecarState,
+      };
+    }
+
     set({
       rootDirHandle: null,
-      rootDirName: 'Imported Course Directory',
+      rootDirName: inferredDirName,
       permissionGranted: true,
       isDemoMode: false,
       scannedCourses: courses,
       scannedClusters: clusters,
+      libraryState: currentLibState,
       isScanning: false,
       scanStatus: '',
     });
+
+    // Cache in IndexedDB for instant persistence across reloads
+    await setIdb(SCANNED_COURSES_CACHE_KEY, serializeCoursesForCache(courses));
+    await setIdb(SCANNED_CLUSTERS_CACHE_KEY, clusters);
+    await setIdb(LIBRARY_STATE_CACHE_KEY, currentLibState);
+    await setIdb(ROOT_HANDLE_NAME_KEY, inferredDirName);
+
+    // Hydrate durations
+    for (const course of courses) {
+      for (const mod of course.modules) {
+        for (const lesson of mod.lessons) {
+          if (lesson.videoFile && lesson.durationSeconds === 0) {
+            const file = lesson.videoFile;
+            const rel = lesson.relativePath;
+            durationHydrator.getCachedDuration(rel, file).then((cached) => {
+              if (cached) {
+                lesson.durationSeconds = cached;
+                set((s) => ({ scannedCourses: [...s.scannedCourses] }));
+              } else {
+                durationHydrator.enqueue({
+                  relativePath: rel,
+                  file,
+                  onResolved: (dur) => {
+                    lesson.durationSeconds = dur;
+                    set((s) => ({ scannedCourses: [...s.scannedCourses] }));
+                  },
+                });
+              }
+            });
+          }
+        }
+      }
+    }
   },
 
   selectCourse: (coursePath: string) => {
@@ -405,6 +549,26 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
     } else if (get().isDemoMode) {
       // Demo mock video
       videoUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+    } else if (get().rootDirHandle) {
+      // Reloaded page with FileSystemDirectoryHandle: resolve file on demand
+      try {
+        const rootHandle = get().rootDirHandle!;
+        if (!get().permissionGranted) {
+          await get().reconnectDirectory();
+        }
+        const fileHandle = await getFileHandleByPath(rootHandle, lesson.relativePath);
+        if (fileHandle) {
+          const file = await fileHandle.getFile();
+          lesson.videoFile = file;
+          lesson.videoHandle = fileHandle;
+          videoUrl = URL.createObjectURL(file);
+        }
+      } catch (err) {
+        console.warn('Could not re-fetch video file handle on demand:', err);
+      }
+    } else {
+      // Reloaded page in file input fallback mode: prompt user to re-mount folder
+      await triggerMountDirectory();
     }
 
     if (lesson.subtitleFiles && lesson.subtitleFiles.length > 0) {
@@ -412,6 +576,14 @@ export const useCourseStore = create<CourseStoreState>((set, get) => ({
       if (primarySub.file) {
         const { createVttBlobUrlFromSrtFile } = await import('@/lib/subtitles');
         subtitleUrl = await createVttBlobUrlFromSrtFile(primarySub.file);
+      } else if (primarySub.handle) {
+        try {
+          const file = await primarySub.handle.getFile();
+          const { createVttBlobUrlFromSrtFile } = await import('@/lib/subtitles');
+          subtitleUrl = await createVttBlobUrlFromSrtFile(file);
+        } catch (e) {
+          console.warn('Could not read subtitle file handle:', e);
+        }
       }
     }
 

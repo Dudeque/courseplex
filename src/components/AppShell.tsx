@@ -85,6 +85,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     rescanDirectory,
     loadDemoMode,
     libraryState,
+    scannedCourses,
   } = useCourseStore();
 
   useEffect(() => {
@@ -237,7 +238,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 Mount Real Hard Drive
               </button>
             </div>
-          ) : rootDirHandle ? (
+          ) : rootDirHandle || scannedCourses.length > 0 ? (
             <div className="p-2.5 rounded-xl bg-white/5 border border-white/5 flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5 min-w-0">
@@ -247,27 +248,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     }`}
                   />
                   <span className="text-xs text-gray-200 font-medium truncate">
-                    {rootDirName || rootDirHandle.name}
+                    {rootDirName || (rootDirHandle ? rootDirHandle.name : 'Local Courses')}
                   </span>
                 </div>
               </div>
 
               {!permissionGranted ? (
                 <button
-                  onClick={() => reconnectDirectory()}
-                  className="w-full py-1.5 px-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-medium border border-amber-500/30 transition-all flex items-center justify-center gap-1.5"
+                  onClick={() => (rootDirHandle ? reconnectDirectory() : triggerMountDirectory())}
+                  className="w-full py-1.5 px-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-medium border border-amber-500/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <AlertCircle className="w-3.5 h-3.5" />
-                  Grant Permission
+                  <span>{rootDirHandle ? 'Grant Permission' : 'Re-mount Folder'}</span>
                 </button>
               ) : (
                 <button
-                  onClick={() => rescanDirectory()}
+                  onClick={() => (rootDirHandle ? rescanDirectory() : triggerMountDirectory())}
                   disabled={isScanning}
-                  className="w-full py-1 px-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-medium transition-all flex items-center justify-center gap-1.5"
+                  className="w-full py-1 px-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <FolderSync className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
-                  Rescan Disk
+                  <span>{rootDirHandle ? 'Rescan Disk' : 'Re-mount Folder'}</span>
                 </button>
               )}
             </div>
