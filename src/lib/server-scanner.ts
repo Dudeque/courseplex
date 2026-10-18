@@ -18,7 +18,9 @@ import {
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
-const VIDEO_EXTENSIONS = new Set(['mp4', 'mkv', 'webm', 'mov', 'm4v', 'avi', 'wmv', 'flv', 'ts', '3gp']);
+const VIDEO_EXTENSIONS = new Set([
+  'mp4', 'mkv', 'webm', 'mov', 'm4v', 'avi', 'wmv', 'flv', 'ts', '3gp', 'm4p', 'mpg', 'mpeg', 'm2ts', 'vob', 'ogv',
+]);
 const SUBTITLE_EXTENSIONS = new Set(['srt', 'vtt']);
 const ATTACHMENT_EXTENSIONS = new Set([
   'zip', 'tar', 'gz', '7z', 'rar', 'tgz', 'bz2', 'xz',
@@ -493,5 +495,333 @@ export async function scanServerDirectory(coursesDir: string): Promise<{
     if (rootCourse) scannedCourses.push(rootCourse);
   }
 
+  // Recursive deep scan fallback: if shallow scans found 0 courses,
+  // walk all directory levels to discover and auto-organize all videos
+  if (scannedCourses.length === 0) {
+    console.log('[ServerScanner] Shallow scan found 0 courses, running deep recursive scan on:', coursesDir);
+    const deepResult = await deepScanServerCourses(coursesDir);
+    scannedCourses.push(...deepResult.courses);
+    scannedClusters.push(...deepResult.clusters);
+  }
+
   return { courses: scannedCourses, clusters: scannedClusters, libraryState };
+}
+
+interface DiscoveredFile {
+  name: string;
+  ext: string;
+  fullPath: string;
+  dirPath: string;
+  relPath: string;
+  relDir: string;
+}
+
+async function collectAllFiles(
+  currDir: string,
+  relDir: string,
+  depth = 0,
+  maxDepth = 8
+): Promise<DiscoveredFile[]> {
+  if (depth > maxDepth) return [];
+  const items = await getDirItems(currDir);
+  const files: DiscoveredFile[] = [];
+
+  for (const item of items) {
+    if (item.name.startsWith('.')) continue;
+
+    if (item.isDir) {
+      if (isResourceDirectoryName(item.name)) continue;
+      const nextRel = relDir ? `${relDir}/${item.name}` : item.name;
+      const nested = await collectAllFiles(item.fullPath, nextRel, depth + 1, maxDepth);
+      files.push(...nested);
+    } else {
+      const ext = getFileExtension(item.name);
+      const relPath = relDir ? `${relDir}/${item.name}` : item.name;
+      files.push({
+        name: item.name,
+        ext,
+        fullPath: item.fullPath,
+        dirPath: currDir,
+        relPath,
+        relDir: relDir || '.',
+      });
+    }
+  }
+
+  return files;
+}
+
+async function deepScanServerCourses(coursesDir: string): Promise<{
+  courses: ScannedCourse[];
+  clusters: ScannedCluster[];
+}> {
+  const allFiles = await collectAllFiles(coursesDir, '');
+  const videoFiles = allFiles.filter((f) => VIDEO_EXTENSIONS.has(f.ext));
+  if (videoFiles.length === 0) {
+    return { courses: [], clusters: [] };
+  }
+
+  interface CourseBucket {
+    courseKey: string;
+    courseTitle: string;
+    clusterId?: string;
+    clusterName?: string;
+    courseFullPath: string;
+    modules: Map<string, {
+      moduleKey: string;
+      moduleTitle: string;
+      orderIndex: number;
+      moduleFullPath: string;
+      videos: DiscoveredFile[];
+    }>;
+  }
+
+  const courseMap = new Map<string, CourseBucket>();
+
+  for (const v of videoFiles) {
+    const parts = v.relDir === '.' ? [] : v.relDir.split('/');
+
+    let courseKey = '.';
+    let courseTitle = path.basename(coursesDir) || 'Local Course';
+    let clusterId: string | undefined;
+    let clusterName: string | undefined;
+    let moduleKey = '.';
+    let moduleTitle = 'Course Curriculum';
+    let courseFullPath = coursesDir;
+    let moduleFullPath = coursesDir;
+
+    if (parts.length === 0) {
+      // Direct video in root
+      courseKey = '.';
+      courseTitle = path.basename(coursesDir) || 'Local Course';
+      moduleKey = '.';
+      moduleTitle = 'Course Curriculum';
+      courseFullPath = coursesDir;
+      moduleFullPath = coursesDir;
+    } else if (parts.length === 1) {
+      // Course/video.mp4
+      courseKey = parts[0];
+      courseTitle = cleanTitle(parts[0]).title;
+      moduleKey = parts[0];
+      moduleTitle = 'Course Curriculum';
+      courseFullPath = path.join(coursesDir, parts[0]);
+      moduleFullPath = courseFullPath;
+    } else if (parts.length === 2) {
+      // Course/Module/video.mp4
+      courseKey = parts[0];
+      courseTitle = cleanTitle(parts[0]).title;
+      moduleKey = `${parts[0]}/${parts[1]}`;
+      moduleTitle = cleanTitle(parts[1]).title;
+      courseFullPath = path.join(coursesDir, parts[0]);
+      moduleFullPath = path.join(coursesDir, parts[0], parts[1]);
+    } else if (parts.length === 3) {
+      // Cluster/Course/Module/video.mp4 OR Course/Module/Videos/video.mp4
+      const last = parts[2].toLowerCase();
+      if (['videos', 'video', 'content', 'lectures', 'lessons', 'media'].includes(last)) {
+        courseKey = parts[0];
+        courseTitle = cleanTitle(parts[0]).title;
+        moduleKey = `${parts[0]}/${parts[1]}`;
+        moduleTitle = cleanTitle(parts[1]).title;
+        courseFullPath = path.join(coursesDir, parts[0]);
+        moduleFullPath = path.join(coursesDir, parts[0], parts[1]);
+      } else {
+        clusterId = `cluster-${parts[0].toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+        clusterName = cleanTitle(parts[0]).title;
+        courseKey = `${parts[0]}/${parts[1]}`;
+        courseTitle = cleanTitle(parts[1]).title;
+        moduleKey = `${parts[0]}/${parts[1]}/${parts[2]}`;
+        moduleTitle = cleanTitle(parts[2]).title;
+        courseFullPath = path.join(coursesDir, parts[0], parts[1]);
+        moduleFullPath = path.join(coursesDir, parts[0], parts[1], parts[2]);
+      }
+    } else {
+      // parts.length >= 4: e.g. Category/Subcategory/Course/Module/video.mp4
+      const last = parts[parts.length - 1].toLowerCase();
+      let modIdx = parts.length - 1;
+      if (['videos', 'video', 'content', 'lectures', 'lessons', 'media'].includes(last)) {
+        modIdx = parts.length - 2;
+      }
+      const courseIdx = modIdx - 1;
+      const clusterParts = parts.slice(0, courseIdx);
+
+      if (clusterParts.length > 0) {
+        clusterId = `cluster-${clusterParts[0].toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+        clusterName = clusterParts.map((p) => cleanTitle(p).title).join(' / ');
+      }
+
+      courseKey = parts.slice(0, courseIdx + 1).join('/');
+      courseTitle = cleanTitle(parts[courseIdx]).title;
+      moduleKey = parts.slice(0, modIdx + 1).join('/');
+      moduleTitle = cleanTitle(parts[modIdx]).title;
+      courseFullPath = path.join(coursesDir, ...parts.slice(0, courseIdx + 1));
+      moduleFullPath = path.join(coursesDir, ...parts.slice(0, modIdx + 1));
+    }
+
+    let bucket = courseMap.get(courseKey);
+    if (!bucket) {
+      bucket = {
+        courseKey,
+        courseTitle,
+        clusterId,
+        clusterName,
+        courseFullPath,
+        modules: new Map(),
+      };
+      courseMap.set(courseKey, bucket);
+    }
+
+    let modBucket = bucket.modules.get(moduleKey);
+    if (!modBucket) {
+      const { orderIndex } = cleanTitle(moduleTitle);
+      modBucket = {
+        moduleKey,
+        moduleTitle,
+        orderIndex,
+        moduleFullPath,
+        videos: [],
+      };
+      bucket.modules.set(moduleKey, modBucket);
+    }
+
+    modBucket.videos.push(v);
+  }
+
+  const courses: ScannedCourse[] = [];
+  const clusterMap = new Map<string, { id: string; name: string; coursePaths: string[] }>();
+
+  for (const bucket of courseMap.values()) {
+    let coverUrl: string | undefined;
+    try {
+      const dirEntries = await fs.promises.readdir(bucket.courseFullPath);
+      for (const f of dirEntries) {
+        if (COVER_NAMES.has(f.toLowerCase())) {
+          coverUrl = `/api/local/attachment?path=${encodeURIComponent(
+            bucket.courseKey === '.' ? f : `${bucket.courseKey}/${f}`
+          )}`;
+          break;
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    const courseModules: ScannedModule[] = [];
+    let modFallbackOrder = 1;
+
+    for (const mod of bucket.modules.values()) {
+      let moduleDirFiles: string[] = [];
+      try {
+        moduleDirFiles = await fs.promises.readdir(mod.moduleFullPath);
+      } catch {
+        // ignore
+      }
+
+      const subtitles = moduleDirFiles
+        .filter((f) => SUBTITLE_EXTENSIONS.has(getFileExtension(f)))
+        .map((f) => {
+          const langMatch = f.match(/\.(en|es|fr|de|pt|ru|zh|ja|ko)\.(srt|vtt)$/i);
+          const lang = langMatch ? langMatch[1].toLowerCase() : 'en';
+          return {
+            name: f,
+            lang,
+            relativePath: `${mod.moduleKey}/${f}`,
+          };
+        });
+
+      const lessons: ScannedLesson[] = [];
+      let lesFallbackOrder = 1;
+
+      for (const v of mod.videos) {
+        const { title, orderIndex } = cleanTitle(v.name);
+        const vStem = v.name.replace(/\.[a-zA-Z0-9]+$/, '').toLowerCase().trim();
+
+        const matchedSubs = subtitles.filter((s) => {
+          const sStem = s.name.replace(/\.(en|es|fr|de|pt|ru|zh|ja|ko)?\.[a-zA-Z0-9]+$/, '').toLowerCase().trim();
+          return sStem === vStem || sStem.includes(vStem) || vStem.includes(sStem);
+        });
+
+        lessons.push({
+          id: `lesson-${v.relPath}`,
+          title,
+          rawTitle: v.name,
+          orderIndex: orderIndex !== 9999 ? orderIndex : lesFallbackOrder++,
+          relativePath: v.relPath,
+          coursePath: bucket.courseKey,
+          modulePath: mod.moduleKey,
+          isVideo: true,
+          isResourceOnly: false,
+          durationSeconds: 0,
+          subtitleFiles: matchedSubs,
+          attachments: [],
+        });
+      }
+
+      lessons.sort((a, b) => {
+        if (a.orderIndex !== b.orderIndex) return a.orderIndex - b.orderIndex;
+        return collator.compare(a.title, b.title);
+      });
+
+      if (lessons.length > 0) {
+        courseModules.push({
+          id: `mod-${mod.moduleKey}`,
+          title: mod.moduleTitle,
+          rawTitle: mod.moduleTitle,
+          orderIndex: mod.orderIndex !== 9999 ? mod.orderIndex : modFallbackOrder++,
+          relativePath: mod.moduleKey,
+          lessons,
+        });
+      }
+    }
+
+    courseModules.sort((a, b) => {
+      if (a.orderIndex !== b.orderIndex) return a.orderIndex - b.orderIndex;
+      return collator.compare(a.title, b.title);
+    });
+
+    if (courseModules.length > 0) {
+      let totalLessons = 0;
+      for (const m of courseModules) totalLessons += m.lessons.length;
+
+      const course: ScannedCourse = {
+        id: `course-${bucket.courseKey}`,
+        title: bucket.courseTitle,
+        rawTitle: bucket.courseTitle,
+        relativePath: bucket.courseKey,
+        clusterId: bucket.clusterId,
+        clusterName: bucket.clusterName,
+        coverUrl,
+        modules: courseModules,
+        totalLessons,
+        totalDurationSeconds: 0,
+      };
+
+      courses.push(course);
+
+      if (bucket.clusterId && bucket.clusterName) {
+        const existingCluster = clusterMap.get(bucket.clusterId) || {
+          id: bucket.clusterId,
+          name: bucket.clusterName,
+          coursePaths: [],
+        };
+        existingCluster.coursePaths.push(bucket.courseKey);
+        clusterMap.set(bucket.clusterId, existingCluster);
+      }
+    }
+  }
+
+  courses.sort((a, b) => collator.compare(a.title, b.title));
+
+  const clusters: ScannedCluster[] = [];
+  let colorIdx = 0;
+  for (const c of clusterMap.values()) {
+    clusters.push({
+      id: c.id,
+      name: c.name,
+      relativePath: c.id,
+      color: CLUSTER_COLORS[colorIdx++ % CLUSTER_COLORS.length],
+      coursePaths: c.coursePaths,
+    });
+  }
+
+  return { courses, clusters };
 }
