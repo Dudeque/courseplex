@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { downloadBackupJson } from '@/lib/disk-sync';
 import { lockDevice } from '@/lib/security';
+import { triggerMountDirectory } from '@/lib/fs-handle';
 
 interface CommandItem {
   id: string;
@@ -78,7 +79,7 @@ export function CommandPalette() {
       action: async () => {
         setIsOpen(false);
         try {
-          await connectDirectory();
+          await triggerMountDirectory();
         } catch (e) {
           console.warn('Mount error:', e);
         }

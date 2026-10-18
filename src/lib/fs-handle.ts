@@ -9,12 +9,22 @@ export function isFileSystemAccessSupported(): boolean {
 
 export async function pickAndSaveRootDirectory(): Promise<FileSystemDirectoryHandle> {
   if (!isFileSystemAccessSupported()) {
-    throw new Error('File System Access API is not supported in this browser. Please use Chrome, Edge, or Brave.');
+    throw new Error('NOT_SUPPORTED');
   }
 
-  const handle = await (window as unknown as { showDirectoryPicker: (opts: { mode: string }) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker({
-    mode: 'readwrite',
-  });
+  let handle: FileSystemDirectoryHandle;
+  try {
+    handle = await (window as unknown as { showDirectoryPicker: (opts?: { mode?: string }) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker({
+      mode: 'readwrite',
+    });
+  } catch (err: unknown) {
+    const error = err as { name?: string; message?: string };
+    if (error?.name === 'AbortError') {
+      throw err;
+    }
+    // Retry without mode argument in case browser rejected mode parameter
+    handle = await (window as unknown as { showDirectoryPicker: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker();
+  }
 
   await set(ROOT_HANDLE_KEY, handle);
   await set(ROOT_HANDLE_NAME_KEY, handle.name);
@@ -64,4 +74,28 @@ export async function requestRootPermission(handle: FileSystemDirectoryHandle): 
 export async function clearSavedRootDirectory(): Promise<void> {
   await del(ROOT_HANDLE_KEY);
   await del(ROOT_HANDLE_NAME_KEY);
+}
+
+export async function triggerMountDirectory(): Promise<void> {
+  const store = (await import('@/store/useCourseStore')).useCourseStore.getState();
+  if (isFileSystemAccessSupported()) {
+    try {
+      await store.connectDirectory();
+      return;
+    } catch (err: unknown) {
+      const error = err as { name?: string };
+      if (error?.name === 'AbortError') {
+        return;
+      }
+      console.warn('showDirectoryPicker failed, falling back to directory input:', err);
+    }
+  }
+
+  // Fallback: trigger global directory input
+  if (typeof document !== 'undefined') {
+    const input = document.getElementById('courseplex-global-folder-input') as HTMLInputElement | null;
+    if (input) {
+      input.click();
+    }
+  }
 }

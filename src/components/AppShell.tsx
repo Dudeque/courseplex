@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { Suspense } from 'react';
 import { lockDevice } from '@/lib/security';
+import { triggerMountDirectory } from '@/lib/fs-handle';
 
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
@@ -101,6 +102,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-[#090a0f] text-[#f3f4f6] flex flex-col md:flex-row antialiased selection:bg-indigo-500 selection:text-white">
       {/* Command Palette */}
       <CommandPalette />
+
+      {/* Global Hidden webkitdirectory input */}
+      <input
+        id="courseplex-global-folder-input"
+        type="file"
+        // @ts-expect-error webkitdirectory is standard browser extension
+        webkitdirectory=""
+        directory=""
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            useCourseStore.getState().scanFromInputFiles(e.target.files);
+          }
+        }}
+      />
 
       {/* Mobile Top Header */}
       <header className="md:hidden flex items-center justify-between px-4 py-3 bg-[#111420] border-b border-white/10 z-30">
@@ -257,7 +274,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           ) : (
             <div className="flex flex-col gap-2">
               <button
-                onClick={() => connectDirectory()}
+                onClick={() => triggerMountDirectory()}
                 className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-1.5"
               >
                 <HardDrive className="w-3.5 h-3.5" />

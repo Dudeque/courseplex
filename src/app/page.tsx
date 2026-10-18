@@ -4,6 +4,7 @@ import React, { useRef, useMemo } from 'react';
 import { useCourseStore } from '@/store/useCourseStore';
 import { OnDeckHero } from '@/components/OnDeckHero';
 import { CourseCard } from '@/components/CourseCard';
+import { triggerMountDirectory } from '@/lib/fs-handle';
 import {
   HardDrive,
   FolderSync,
@@ -150,7 +151,7 @@ export default function HomePage() {
 
             <div className="flex flex-wrap items-center gap-3 pt-4">
               <button
-                onClick={() => connectDirectory()}
+                onClick={() => triggerMountDirectory()}
                 className="px-6 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/30 transition-all flex items-center gap-2 hover:scale-105"
               >
                 <HardDrive className="w-4 h-4" />
