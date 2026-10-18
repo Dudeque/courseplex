@@ -7,7 +7,7 @@
   "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
-    "dev:electron": "concurrently -k \"next dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "dev:electron": "concurrently -k \"next dev\" \"electron .\"",
     "build": "next build",
     "build:electron": "next build && node scripts/prepare-standalone.js && node scripts/patch-balanced-match.js",
     "dist:win": "pnpm build:electron && electron-builder --win",

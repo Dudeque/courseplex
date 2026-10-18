@@ -23,10 +23,16 @@ export function ServerFolderModal() {
     disconnectServerDirectory,
   } = useCourseStore();
 
-  const [pathInput, setPathInput] = useState('');
+  const [pathInput, setPathInput] = useState(serverCoursesDir || '');
+  const [prevDir, setPrevDir] = useState(serverCoursesDir);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  if (serverCoursesDir !== prevDir) {
+    setPrevDir(serverCoursesDir);
+    setPathInput(serverCoursesDir || '');
+  }
 
   const isElectron =
     typeof window !== 'undefined' &&
@@ -56,12 +62,6 @@ export function ServerFolderModal() {
       }
     }
   };
-
-  useEffect(() => {
-    if (serverCoursesDir) {
-      setPathInput(serverCoursesDir);
-    }
-  }, [serverCoursesDir, isFolderModalOpen]);
 
   if (!isFolderModalOpen) return null;
 
