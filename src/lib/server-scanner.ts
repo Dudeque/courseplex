@@ -541,6 +541,25 @@ export async function scanServerDirectory(coursesDir: string): Promise<{
     }
   }
 
+  if (libraryState) {
+    for (const course of scannedCourses) {
+      let courseTotal = 0;
+      for (const mod of course.modules) {
+        for (const lesson of mod.lessons) {
+          const cachedDur =
+            libraryState.durations?.[lesson.relativePath] ||
+            libraryState.progress?.[lesson.relativePath]?.durationSeconds ||
+            0;
+          if (cachedDur > 0) {
+            lesson.durationSeconds = cachedDur;
+          }
+          courseTotal += lesson.durationSeconds || 0;
+        }
+      }
+      course.totalDurationSeconds = courseTotal;
+    }
+  }
+
   return { courses: scannedCourses, clusters: scannedClusters, libraryState };
 }
 

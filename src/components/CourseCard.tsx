@@ -4,6 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { ScannedCourse } from '@/types/course';
 import { useCourseStore } from '@/store/useCourseStore';
+import { apiUrl } from '@/lib/server-url';
 import {
   Clock,
   PlayCircle,
@@ -87,7 +88,7 @@ export function CourseCard({ course }: CourseCardProps) {
         {course.coverUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={course.coverUrl}
+            src={apiUrl(course.coverUrl)}
             alt={course.title}
             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
           />

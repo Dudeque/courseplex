@@ -19,6 +19,16 @@ if (fs.existsSync(publicSrc)) {
   console.log('✓ Copied public assets to standalone build');
 }
 
+// Clean up any stray build directories that Next.js tracing may have copied
+const strayDirs = ['dist-electron', 'standalone', '.git', '.github'];
+for (const dir of strayDirs) {
+  const p = path.join(standaloneSource, dir);
+  if (fs.existsSync(p)) {
+    fs.rmSync(p, { recursive: true, force: true });
+    console.log(`✓ Removed stray ${dir} from standalone build`);
+  }
+}
+
 // Mirror to top-level 'standalone' directory so electron-builder packages it without dotfile filtering
 const targetStandalone = path.join(root, 'standalone');
 if (fs.existsSync(targetStandalone)) {

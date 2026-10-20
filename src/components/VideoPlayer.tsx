@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { ScannedLesson } from '@/types/course';
 import { useCourseStore } from '@/store/useCourseStore';
 import {
@@ -18,11 +18,15 @@ import {
   Subtitles,
   ArrowRight,
   PictureInPicture,
+  Camera,
+  Sparkles,
 } from 'lucide-react';
 
 interface VideoPlayerProps {
   lesson: ScannedLesson;
   initialTime?: number;
+  seekRequest?: { time: number; nonce: number } | null;
+  onTimeChange?: (seconds: number) => void;
   onNextLesson?: () => void;
   hasNextLesson?: boolean;
   onTakeNote?: (timestampSeconds: number) => void;
@@ -40,6 +44,8 @@ function formatTime(secs: number) {
 export function VideoPlayer({
   lesson,
   initialTime = 0,
+  seekRequest,
+  onTimeChange,
   onNextLesson,
   hasNextLesson = false,
   onTakeNote,
@@ -57,6 +63,8 @@ export function VideoPlayer({
     toggleTheaterMode,
     updateLessonProgress,
     logStudySession,
+    libraryState,
+    addOrUpdateNote,
   } = useCourseStore();
 
   const [isPlaying, setIsPlaying] = useState(false);
@@ -69,8 +77,6 @@ export function VideoPlayer({
   const [isSpeedMenuOpen, setIsSpeedMenuOpen] = useState(false);
   const [subtitlesEnabled, setSubtitlesEnabled] = useState(true);
   const [notification, setNotification] = useState<string | null>(null);
-
-  // Auto-advance overlay state
   const [autoAdvanceCountdown, setAutoAdvanceCountdown] = useState<number | null>(null);
 
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -78,21 +84,42 @@ export function VideoPlayer({
   const studySessionStartRef = useRef<number>(0);
   const studySessionAccumulatedRef = useRef<number>(0);
 
+  const lessonNotes = useMemo(
+    () => libraryState.notes[lesson.relativePath] || [],
+    [libraryState.notes, lesson.relativePath]
+  );
+
+  const lessonChapters = useMemo(
+    () => libraryState.chapters?.[lesson.relativePath] || [],
+    [libraryState.chapters, lesson.relativePath]
+  );
+
+  const activeChapter = useMemo(() => {
+    if (lessonChapters.length === 0) return null;
+    let current = lessonChapters[0];
+    for (const ch of lessonChapters) {
+      if (currentTime >= ch.startSeconds) {
+        current = ch;
+      } else {
+        break;
+      }
+    }
+    return current;
+  }, [lessonChapters, currentTime]);
+
   const showNotification = useCallback((msg: string) => {
     setNotification(msg);
     setTimeout(() => {
       setNotification((curr) => (curr === msg ? null : curr));
-    }, 2000);
+    }, 2200);
   }, []);
 
-  // Update playback speed on video element
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.playbackRate = playbackSpeed;
     }
   }, [playbackSpeed]);
 
-  // Initial seek if initialTime or stored progress exists
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -102,6 +129,8 @@ export function VideoPlayer({
       setDuration(dur);
       if (initialTime > 0 && initialTime < dur) {
         video.currentTime = initialTime;
+        setCurrentTime(initialTime);
+        onTimeChange?.(initialTime);
       }
     };
 
@@ -109,9 +138,18 @@ export function VideoPlayer({
     return () => {
       video.removeEventListener('loadedmetadata', handleLoadedMetadata);
     };
-  }, [initialTime, lesson.relativePath]);
+  }, [initialTime, lesson.relativePath, onTimeChange]);
 
-  // Log study session when unmounting or switching lessons
+  // Respond immediately to external seek requests (from Notes, Transcript, AI Tutor, Chapters)
+  useEffect(() => {
+    if (!seekRequest || !videoRef.current) return;
+    const video = videoRef.current;
+    const target = Math.max(0, seekRequest.time);
+    video.currentTime = target;
+    setCurrentTime(target);
+    onTimeChange?.(target);
+  }, [seekRequest, onTimeChange]);
+
   useEffect(() => {
     const currentLessonPath = lesson.relativePath;
     const currentCoursePath = lesson.coursePath;
@@ -128,7 +166,6 @@ export function VideoPlayer({
     };
   }, [lesson.relativePath, lesson.coursePath, playbackSpeed, logStudySession]);
 
-  // Throttled progress save
   const handleTimeUpdate = () => {
     const video = videoRef.current;
     if (!video) return;
@@ -136,8 +173,8 @@ export function VideoPlayer({
     const curr = video.currentTime;
     const dur = video.duration || duration;
     setCurrentTime(curr);
+    onTimeChange?.(curr);
 
-    // Accumulate actual watch seconds
     studySessionAccumulatedRef.current += 0.25;
 
     const now = Date.now();
@@ -156,7 +193,6 @@ export function VideoPlayer({
     }
   };
 
-  // Auto-advance countdown timer
   useEffect(() => {
     if (autoAdvanceCountdown === null) return;
     const timer = setTimeout(() => {
@@ -185,12 +221,18 @@ export function VideoPlayer({
     }
   }, []);
 
-  const seekRelative = useCallback((deltaSeconds: number) => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.currentTime = Math.max(0, Math.min(video.duration || duration, video.currentTime + deltaSeconds));
-    showNotification(`${deltaSeconds > 0 ? '+' : ''}${deltaSeconds}s`);
-  }, [duration, showNotification]);
+  const seekRelative = useCallback(
+    (deltaSeconds: number) => {
+      const video = videoRef.current;
+      if (!video) return;
+      const next = Math.max(0, Math.min(video.duration || duration, video.currentTime + deltaSeconds));
+      video.currentTime = next;
+      setCurrentTime(next);
+      onTimeChange?.(next);
+      showNotification(`${deltaSeconds > 0 ? '+' : ''}${deltaSeconds}s`);
+    },
+    [duration, onTimeChange, showNotification]
+  );
 
   const toggleMute = useCallback(() => {
     const video = videoRef.current;
@@ -199,13 +241,19 @@ export function VideoPlayer({
     setIsMuted(video.muted);
   }, []);
 
-  const changeSpeedByStep = useCallback((step: number) => {
-    const currentIndex = SPEED_OPTIONS.indexOf(playbackSpeed);
-    const newIndex = Math.max(0, Math.min(SPEED_OPTIONS.length - 1, (currentIndex !== -1 ? currentIndex : 2) + step));
-    const newSpeed = SPEED_OPTIONS[newIndex];
-    setPlaybackSpeed(newSpeed);
-    showNotification(`${newSpeed}x speed`);
-  }, [playbackSpeed, setPlaybackSpeed, showNotification]);
+  const changeSpeedByStep = useCallback(
+    (step: number) => {
+      const currentIndex = SPEED_OPTIONS.indexOf(playbackSpeed);
+      const newIndex = Math.max(
+        0,
+        Math.min(SPEED_OPTIONS.length - 1, (currentIndex !== -1 ? currentIndex : 2) + step)
+      );
+      const newSpeed = SPEED_OPTIONS[newIndex];
+      setPlaybackSpeed(newSpeed);
+      showNotification(`${newSpeed}x speed`);
+    },
+    [playbackSpeed, setPlaybackSpeed, showNotification]
+  );
 
   const toggleFullscreen = useCallback(() => {
     if (!containerRef.current) return;
@@ -233,10 +281,44 @@ export function VideoPlayer({
     }
   }, []);
 
-  // Keyboard Shortcuts Handler
+  const captureFrameSnapshot = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      showNotification('Video frame not ready');
+      return;
+    }
+    try {
+      const targetWidth = Math.min(640, video.videoWidth);
+      const scale = targetWidth / video.videoWidth;
+      const targetHeight = Math.round(video.videoHeight * scale);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+      const t = Math.round(video.currentTime);
+
+      addOrUpdateNote({
+        lessonPath: lesson.relativePath,
+        coursePath: lesson.coursePath,
+        timestampSeconds: t,
+        contentMarkdown: `📸 **Frame Snapshot (${formatTime(t)})**\n\n![Snapshot at ${formatTime(t)}](${dataUrl})`,
+        tags: ['snapshot'],
+      });
+
+      showNotification(`📸 Frame captured to Notes at ${formatTime(t)}`);
+    } catch (err) {
+      console.warn('Snapshot capture failed:', err);
+      showNotification('Could not capture frame snapshot');
+    }
+  }, [addOrUpdateNote, lesson.coursePath, lesson.relativePath, showNotification]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if typing in an input or textarea
       const target = e.target as HTMLElement;
       if (
         target.tagName === 'INPUT' ||
@@ -292,12 +374,26 @@ export function VideoPlayer({
             showNotification(`Note opened at ${formatTime(t)}`);
           }
           break;
+        case 's':
+          e.preventDefault();
+          captureFrameSnapshot();
+          break;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlay, seekRelative, changeSpeedByStep, toggleMute, toggleFullscreen, onDropBookmark, onTakeNote, showNotification]);
+  }, [
+    togglePlay,
+    seekRelative,
+    changeSpeedByStep,
+    toggleMute,
+    toggleFullscreen,
+    onDropBookmark,
+    onTakeNote,
+    captureFrameSnapshot,
+    showNotification,
+  ]);
 
   const handleMouseMove = () => {
     setShowControls(true);
@@ -320,11 +416,11 @@ export function VideoPlayer({
         isTheaterMode ? 'aspect-21/9 max-h-[85vh]' : 'aspect-video max-h-[75vh]'
       } rounded-2xl shadow-2xl border border-white/5`}
     >
-      {/* Video Element */}
       {activeVideoUrl ? (
         <video
           ref={videoRef}
           src={activeVideoUrl}
+          crossOrigin="anonymous"
           className="w-full h-full object-contain"
           playsInline
           onTimeUpdate={handleTimeUpdate}
@@ -353,14 +449,12 @@ export function VideoPlayer({
         </div>
       )}
 
-      {/* Quick Notification Toast */}
       {notification && (
         <div className="absolute top-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-xl bg-black/80 backdrop-blur-md border border-white/10 text-white text-xs font-semibold shadow-xl animate-in fade-in duration-150 z-30">
           {notification}
         </div>
       )}
 
-      {/* Auto-Advance Overlay */}
       {autoAdvanceCountdown !== null && (
         <div className="absolute inset-0 bg-black/85 backdrop-blur-md flex flex-col items-center justify-center gap-4 z-40 text-center animate-in fade-in">
           <div className="w-16 h-16 rounded-full border-4 border-indigo-500 border-t-transparent animate-spin flex items-center justify-center text-xl font-bold text-white">
@@ -395,7 +489,6 @@ export function VideoPlayer({
         </div>
       )}
 
-      {/* Center Big Play/Pause Splash Indicator on click */}
       {!isPlaying && activeVideoUrl && (
         <div
           onClick={togglePlay}
@@ -409,36 +502,83 @@ export function VideoPlayer({
 
       {/* Controls Overlay Bar */}
       <div
-        className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-4 flex flex-col gap-2 transition-opacity duration-300 z-20 ${
+        className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/75 to-transparent p-4 flex flex-col gap-2 transition-opacity duration-300 z-20 ${
           showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
-        {/* Scrubber Progress Bar */}
+        {/* Scrubber Progress Bar with Chapter Ticks & Note/Bookmark Markers */}
         <div
-          className="relative w-full h-2 group/scrub cursor-pointer py-1 flex items-center"
+          className="relative w-full h-3 group/scrub cursor-pointer py-1 flex items-center"
           onClick={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
-            const clickPos = (e.clientX - rect.left) / rect.width;
+            const clickPos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
             if (videoRef.current && duration > 0) {
-              videoRef.current.currentTime = clickPos * duration;
+              const next = clickPos * duration;
+              videoRef.current.currentTime = next;
+              setCurrentTime(next);
+              onTimeChange?.(next);
             }
           }}
         >
-          <div className="w-full h-1 bg-white/20 rounded-full overflow-hidden group-hover/scrub:h-2 transition-all">
+          <div className="relative w-full h-1.5 bg-white/20 rounded-full overflow-visible group-hover/scrub:h-2.5 transition-all">
             <div
               className="h-full bg-indigo-500 rounded-full transition-all relative"
               style={{ width: `${progressPercentage}%` }}
             />
+
+            {/* AI Chapter Dividers */}
+            {duration > 0 &&
+              lessonChapters.map((ch, idx) => {
+                if (ch.startSeconds <= 0 || ch.startSeconds >= duration) return null;
+                const pct = (ch.startSeconds / duration) * 100;
+                return (
+                  <div
+                    key={`ch-${idx}`}
+                    style={{ left: `${pct}%` }}
+                    title={`Chapter: ${ch.title} (${formatTime(ch.startSeconds)})`}
+                    className="absolute top-0 bottom-0 w-0.5 bg-black/80 z-10"
+                  />
+                );
+              })}
+
+            {/* Note & Bookmark Markers */}
+            {duration > 0 &&
+              lessonNotes.map((note) => {
+                const pct = Math.min(99.5, Math.max(0.5, (note.timestampSeconds / duration) * 100));
+                const isBookmark = note.isBookmarkOnly;
+                const previewText = isBookmark
+                  ? 'Bookmark'
+                  : note.contentMarkdown.replace(/!\[.*?\]\(.*?\)/g, '[Snapshot]').slice(0, 60);
+                return (
+                  <button
+                    key={note.id}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (videoRef.current) {
+                        videoRef.current.currentTime = note.timestampSeconds;
+                        setCurrentTime(note.timestampSeconds);
+                        onTimeChange?.(note.timestampSeconds);
+                      }
+                    }}
+                    style={{ left: `${pct}%` }}
+                    title={`[${formatTime(note.timestampSeconds)}] ${previewText}`}
+                    className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full border border-black shadow-md transform hover:scale-150 transition-transform z-20 cursor-pointer ${
+                      isBookmark ? 'bg-amber-400' : 'bg-emerald-400'
+                    }`}
+                  />
+                );
+              })}
           </div>
         </div>
 
         {/* Lower Action Controls Bar */}
         <div className="flex items-center justify-between gap-2 text-white text-xs">
-          {/* Left Controls: Play, Skip, Time, Volume */}
-          <div className="flex items-center gap-2">
+          {/* Left Controls: Play, Skip, Time, Active Chapter, Volume */}
+          <div className="flex items-center gap-2 min-w-0">
             <button
               onClick={togglePlay}
-              className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+              className="p-2 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
               title={isPlaying ? 'Pause (Space / K)' : 'Play (Space / K)'}
             >
               {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 fill-current" />}
@@ -446,7 +586,7 @@ export function VideoPlayer({
 
             <button
               onClick={() => seekRelative(-10)}
-              className="p-2 rounded-lg hover:bg-white/10 transition-colors text-gray-300 hover:text-white"
+              className="p-2 rounded-lg hover:bg-white/10 transition-colors text-gray-300 hover:text-white cursor-pointer"
               title="Seek -10s (J)"
             >
               <RotateCcw className="w-4 h-4" />
@@ -454,24 +594,29 @@ export function VideoPlayer({
 
             <button
               onClick={() => seekRelative(10)}
-              className="p-2 rounded-lg hover:bg-white/10 transition-colors text-gray-300 hover:text-white"
+              className="p-2 rounded-lg hover:bg-white/10 transition-colors text-gray-300 hover:text-white cursor-pointer"
               title="Seek +10s (L)"
             >
               <RotateCw className="w-4 h-4" />
             </button>
 
-            {/* Time Indicator */}
-            <div className="font-mono text-xs text-gray-300 px-2">
+            <div className="font-mono text-xs text-gray-300 px-1.5 shrink-0">
               <span>{formatTime(currentTime)}</span>
               <span className="text-gray-600 mx-1">/</span>
               <span>{formatTime(duration)}</span>
             </div>
 
-            {/* Volume */}
-            <div className="flex items-center gap-1.5 ml-2 group/vol">
+            {activeChapter && (
+              <div className="hidden md:flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-500/20 border border-indigo-500/30 text-indigo-200 text-[11px] truncate max-w-[200px]">
+                <Sparkles className="w-3 h-3 text-indigo-400 shrink-0" />
+                <span className="truncate">{activeChapter.title}</span>
+              </div>
+            )}
+
+            <div className="hidden sm:flex items-center gap-1.5 ml-1 group/vol">
               <button
                 onClick={toggleMute}
-                className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-gray-300 hover:text-white"
+                className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-gray-300 hover:text-white cursor-pointer"
                 title="Mute (M)"
               >
                 {isMuted || volume === 0 ? (
@@ -500,8 +645,18 @@ export function VideoPlayer({
             </div>
           </div>
 
-          {/* Right Controls: Notes, Bookmarks, Speed, Subtitles, Theater, Fullscreen */}
-          <div className="flex items-center gap-1.5">
+          {/* Right Controls: Snapshot, Bookmark, Note, Subtitles, Speed, PiP, Theater, Fullscreen */}
+          <div className="flex items-center gap-1 shrink-0">
+            {/* Frame Snapshot into Notes */}
+            <button
+              onClick={captureFrameSnapshot}
+              className="p-2 rounded-lg hover:bg-white/10 text-gray-300 hover:text-white transition-colors flex items-center gap-1 cursor-pointer"
+              title="Snapshot Video Frame into Notes (S)"
+            >
+              <Camera className="w-4 h-4 text-indigo-400" />
+              <span className="hidden xl:inline text-[11px] font-medium">Snap</span>
+            </button>
+
             {/* Quick Bookmark Button */}
             <button
               onClick={() => {
@@ -511,7 +666,7 @@ export function VideoPlayer({
                   showNotification(`Bookmark dropped at ${formatTime(t)}`);
                 }
               }}
-              className="p-2 rounded-lg hover:bg-white/10 text-gray-300 hover:text-white transition-colors"
+              className="p-2 rounded-lg hover:bg-white/10 text-gray-300 hover:text-white transition-colors cursor-pointer"
               title="Drop Bookmark (B)"
             >
               <Bookmark className="w-4 h-4" />
@@ -526,7 +681,7 @@ export function VideoPlayer({
                   showNotification(`Note opened at ${formatTime(t)}`);
                 }
               }}
-              className="p-2 rounded-lg hover:bg-white/10 text-gray-300 hover:text-white transition-colors flex items-center gap-1.5"
+              className="p-2 rounded-lg hover:bg-white/10 text-gray-300 hover:text-white transition-colors flex items-center gap-1.5 cursor-pointer"
               title="Take Note (N)"
             >
               <Edit3 className="w-4 h-4" />
@@ -537,7 +692,7 @@ export function VideoPlayer({
             {activeSubtitleUrl && (
               <button
                 onClick={() => setSubtitlesEnabled(!subtitlesEnabled)}
-                className={`p-2 rounded-lg transition-colors ${
+                className={`p-2 rounded-lg transition-colors cursor-pointer ${
                   subtitlesEnabled
                     ? 'text-indigo-400 bg-white/10'
                     : 'text-gray-400 hover:text-white hover:bg-white/5'
@@ -552,7 +707,7 @@ export function VideoPlayer({
             <div className="relative">
               <button
                 onClick={() => setIsSpeedMenuOpen(!isSpeedMenuOpen)}
-                className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-mono font-semibold transition-colors"
+                className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-mono font-semibold transition-colors cursor-pointer"
                 title="Playback Speed ([ and ])"
               >
                 {playbackSpeed}x
@@ -567,7 +722,7 @@ export function VideoPlayer({
                         setPlaybackSpeed(speed);
                         setIsSpeedMenuOpen(false);
                       }}
-                      className={`px-2.5 py-1 text-[11px] font-mono rounded-lg text-left transition-colors ${
+                      className={`px-2.5 py-1 text-[11px] font-mono rounded-lg text-left transition-colors cursor-pointer ${
                         playbackSpeed === speed
                           ? 'bg-indigo-600 text-white font-bold'
                           : 'text-gray-300 hover:bg-white/10'
@@ -580,19 +735,17 @@ export function VideoPlayer({
               )}
             </div>
 
-            {/* Picture in Picture */}
             <button
               onClick={togglePiP}
-              className="p-2 rounded-lg hover:bg-white/10 text-gray-300 hover:text-white transition-colors"
+              className="p-2 rounded-lg hover:bg-white/10 text-gray-300 hover:text-white transition-colors cursor-pointer"
               title="Picture-in-Picture"
             >
               <PictureInPicture className="w-4 h-4" />
             </button>
 
-            {/* Theater Mode */}
             <button
               onClick={toggleTheaterMode}
-              className={`p-2 rounded-lg hover:bg-white/10 transition-colors ${
+              className={`p-2 rounded-lg hover:bg-white/10 transition-colors cursor-pointer ${
                 isTheaterMode ? 'text-indigo-400' : 'text-gray-300 hover:text-white'
               }`}
               title="Theater Mode"
@@ -600,10 +753,9 @@ export function VideoPlayer({
               <Tv className="w-4 h-4" />
             </button>
 
-            {/* Fullscreen */}
             <button
               onClick={toggleFullscreen}
-              className="p-2 rounded-lg hover:bg-white/10 text-gray-300 hover:text-white transition-colors"
+              className="p-2 rounded-lg hover:bg-white/10 text-gray-300 hover:text-white transition-colors cursor-pointer"
               title="Fullscreen (F)"
             >
               {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}

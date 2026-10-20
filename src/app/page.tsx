@@ -1,53 +1,37 @@
 'use client';
 
-import React, { useRef, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useCourseStore } from '@/store/useCourseStore';
 import { OnDeckHero } from '@/components/OnDeckHero';
 import { CourseCard } from '@/components/CourseCard';
-import { triggerMountDirectory } from '@/lib/fs-handle';
 import {
   HardDrive,
   FolderSync,
-  Layers,
   Sparkles,
-  Upload,
   Search,
-  Filter,
-  CheckCircle2,
-  Clock,
   BookOpen,
   Star,
-  SlidersHorizontal,
   AlertCircle,
   Loader2,
+  Wifi,
 } from 'lucide-react';
 
 export default function HomePage() {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [isConnecting, setIsConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
 
   const {
     isServerMode,
     serverCoursesDir,
-    connectServerDirectory,
     rescanServerDirectory,
     disconnectServerDirectory,
     setFolderModalOpen,
-    rootDirHandle,
-    rootDirName,
-    permissionGranted,
     isDemoMode,
     isScanning,
     scanStatus,
     scannedCourses,
     scannedClusters,
     libraryState,
-    connectDirectory,
-    reconnectDirectory,
-    rescanDirectory,
     loadDemoMode,
-    scanFromInputFiles,
     searchQuery,
     setSearchQuery,
     filterCluster,
@@ -58,38 +42,9 @@ export default function HomePage() {
     setSortBy,
   } = useCourseStore();
 
-  const handleConnectServerFolder = async () => {
+  const handleConnectServerFolder = () => {
     setConnectError(null);
-    setIsConnecting(true);
-
-    if (typeof window !== 'undefined' && window.electronAPI?.selectDirectory) {
-      try {
-        const selected = await window.electronAPI.selectDirectory();
-        if (selected) {
-          await connectServerDirectory(selected);
-          setIsConnecting(false);
-          return;
-        }
-        // User closed or cancelled native picker
-        setIsConnecting(false);
-        return;
-      } catch (err: unknown) {
-        console.warn('Native folder selection fallback:', err);
-        const msg = err instanceof Error ? err.message : 'Could not connect folder';
-        setConnectError(msg);
-        setIsConnecting(false);
-        return;
-      }
-    }
-
-    setIsConnecting(false);
     setFolderModalOpen(true);
-  };
-
-  const handleDirectoryUploadFallback = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      scanFromInputFiles(e.target.files);
-    }
   };
 
   // Filter & Sort Courses
@@ -158,18 +113,6 @@ export default function HomePage() {
 
   return (
     <div className="p-6 md:p-10 space-y-8 max-w-7xl mx-auto">
-      {/* Hidden webkitdirectory file input for non-Chromium fallback */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleDirectoryUploadFallback}
-        // @ts-expect-error webkitdirectory is standard browser extension
-        webkitdirectory=""
-        directory=""
-        multiple
-        className="hidden"
-      />
-
       {/* Error alert banner */}
       {connectError && (
         <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-200 text-sm flex items-center justify-between gap-3 shadow-lg">
@@ -194,7 +137,7 @@ export default function HomePage() {
             <span>0 Courses Recognized</span>
           </div>
           <h2 className="text-2xl md:text-3xl font-black text-white tracking-tight leading-tight">
-            Connected to Local Server Folder
+            Connected to Server Library Folder
           </h2>
           <p className="text-xs font-mono text-amber-300/80 bg-black/30 p-3 rounded-xl border border-white/5 break-all">
             {serverCoursesDir}
@@ -214,8 +157,7 @@ export default function HomePage() {
             </button>
             <button
               onClick={handleConnectServerFolder}
-              disabled={isConnecting}
-              className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition-all flex items-center gap-2 cursor-pointer"
             >
               <HardDrive className="w-4 h-4" />
               <span>Change Server Folder</span>
@@ -230,49 +172,40 @@ export default function HomePage() {
         </div>
       ) : null}
 
-      {/* Welcome Hero when no courses are loaded and not in server mode */}
+      {/* Welcome Hero when no courses are loaded */}
       {!isServerMode && !isDemoMode && scannedCourses.length === 0 ? (
         <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#121626] via-[#161a30] to-[#0d101a] border border-indigo-500/20 p-8 md:p-12 shadow-2xl">
           <div className="relative z-10 max-w-2xl space-y-4">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-semibold">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Zero-Cloud • 100% Local Hard Drive</span>
+              <Wifi className="w-3.5 h-3.5" />
+              <span>LAN Media Server • Multi-Device Sync • AI Tutor</span>
             </div>
             <h1 className="text-3xl md:text-5xl font-black text-white tracking-tight leading-tight">
-              Your Personal Netflix &amp; Plex for Video Courses.
+              Your Personal Plex for Video Courses.
             </h1>
             <p className="text-sm md:text-base text-gray-300 leading-relaxed">
-              Mount your local hard drive courses directory. Stream high-res videos instantly,
-              convert `.srt` subtitles on the fly, take timestamped markdown notes, and track your
-              study streaks without cloud uploads or external databases.
+              Share your course library across every PC, Mac, tablet, and phone on your network.
+              Stream high-res videos with live transcripts, take visual frame-snapshot notes, and
+              chat with an AI Tutor grounded in your course videos.
             </p>
 
             <div className="flex flex-wrap items-center gap-3 pt-4">
               <button
                 onClick={handleConnectServerFolder}
-                disabled={isConnecting || isScanning}
+                disabled={isScanning}
                 className="px-6 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-sm shadow-xl shadow-indigo-600/30 transition-all flex items-center gap-2 hover:scale-105 cursor-pointer"
               >
-                {isConnecting || isScanning ? (
+                {isScanning ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>{scanStatus || 'Connecting...'}</span>
+                    <span>{scanStatus || 'Scanning...'}</span>
                   </>
                 ) : (
                   <>
                     <HardDrive className="w-4 h-4" />
-                    <span>Connect Server Folder (Recommended)</span>
+                    <span>Configure Server &amp; Library</span>
                   </>
                 )}
-              </button>
-
-              <button
-                onClick={() => triggerMountDirectory()}
-                className="px-5 py-3.5 rounded-2xl bg-white/10 hover:bg-white/15 text-white font-semibold text-sm border border-white/10 transition-all flex items-center gap-2 cursor-pointer"
-                title="Mount via browser File System Access API"
-              >
-                <FolderSync className="w-4 h-4" />
-                <span>Mount via Browser</span>
               </button>
 
               <button
@@ -282,49 +215,7 @@ export default function HomePage() {
                 <Sparkles className="w-3.5 h-3.5 text-purple-400" />
                 <span>Try Demo Library</span>
               </button>
-
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="px-4 py-3.5 rounded-2xl bg-white/5 hover:bg-white/10 text-gray-400 hover:text-gray-200 text-xs font-medium transition-all flex items-center gap-2 cursor-pointer"
-                title="Browser directory fallback for Safari/Firefox"
-              >
-                <Upload className="w-4 h-4" />
-                <span>Folder Upload (Fallback)</span>
-              </button>
             </div>
-          </div>
-        </div>
-      ) : null}
-
-      {/* Permission Re-authentication / Re-mount Banner (when courses exist in cache but permissions need gesture) */}
-      {!isServerMode && !permissionGranted && !isDemoMode && scannedCourses.length > 0 ? (
-        <div className="p-6 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <h3 className="font-bold text-amber-200 text-base flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>{rootDirHandle ? 'Hard Drive Permission Required' : 'Mount Course Folder to Stream'}</span>
-            </h3>
-            <p className="text-xs text-amber-300/80">
-              {rootDirHandle
-                ? `Browser security requires re-confirming permission to read & sync "${rootDirName || rootDirHandle.name}" on your disk.`
-                : `Showing cached courses for "${rootDirName || 'your library'}". Click Re-mount Folder to stream videos directly.`}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <button
-              onClick={() => (rootDirHandle ? reconnectDirectory() : triggerMountDirectory())}
-              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-lg shadow-amber-500/20 transition-all flex items-center gap-1.5 cursor-pointer"
-            >
-              <FolderSync className="w-4 h-4" />
-              <span>{rootDirHandle ? 'Reconnect Disk Access' : 'Re-mount Folder'}</span>
-            </button>
-            <button
-              onClick={handleConnectServerFolder}
-              className="px-4 py-2 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/40 text-indigo-200 font-semibold text-xs border border-indigo-500/30 transition-all flex items-center gap-1.5 cursor-pointer"
-            >
-              <HardDrive className="w-3.5 h-3.5" />
-              <span>Switch to Server Folder</span>
-            </button>
           </div>
         </div>
       ) : null}

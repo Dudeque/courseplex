@@ -6,21 +6,30 @@ import { useCourseStore } from '@/store/useCourseStore';
 import { VideoPlayer } from '@/components/VideoPlayer';
 import { CurriculumSidebar } from '@/components/CurriculumSidebar';
 import { NotesStudio } from '@/components/NotesStudio';
+import { QrCode } from '@/components/QrCode';
+import { apiUrl } from '@/lib/server-url';
 import { ScannedLesson } from '@/types/course';
 import {
   ArrowLeft,
   Tv,
-  FileText,
   Star,
-  CheckCircle2,
-  Clock,
   ChevronLeft,
   ChevronRight,
+  Smartphone,
+  X,
+  Copy,
+  CheckCircle2,
 } from 'lucide-react';
 import Link from 'next/link';
 
 interface CoursePageProps {
   params: Promise<{ slug: string[] }>;
+}
+
+function formatTime(secs: number) {
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 function CoursePlayerContent({ params }: CoursePageProps) {
@@ -46,16 +55,37 @@ function CoursePlayerContent({ params }: CoursePageProps) {
   } = useCourseStore();
 
   const [currentVideoTime, setCurrentVideoTime] = useState<number>(0);
-  const [targetSeekTime, setTargetSeekTime] = useState<number>(
+  const [initialSeekTime] = useState<number>(
     timestampQuery ? parseFloat(timestampQuery) : 0
   );
+  const [seekRequest, setSeekRequest] = useState<{ time: number; nonce: number } | null>(null);
   const [noteTimestampPreset, setNoteTimestampPreset] = useState<number | null>(null);
+
+  // Phone Handoff QR Modal
+  const [handoffOpen, setHandoffOpen] = useState(false);
+  const [lanBaseUrl, setLanBaseUrl] = useState<string | null>(null);
+  const [copiedHandoff, setCopiedHandoff] = useState(false);
+
+  useEffect(() => {
+    fetch(apiUrl('/api/local/info'))
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.lanUrls?.length > 0) {
+          setLanBaseUrl(data.lanUrls[0]);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Find course
   const course = useMemo(() => {
     return (
       scannedCourses.find((c) => c.relativePath === coursePath) ||
-      scannedCourses.find((c) => (coursePath === '_root_' || coursePath === '.') && (c.relativePath === '_root_' || c.relativePath === '.')) ||
+      scannedCourses.find(
+        (c) =>
+          (coursePath === '_root_' || coursePath === '.') &&
+          (c.relativePath === '_root_' || c.relativePath === '.')
+      ) ||
       scannedCourses.find((c) => c.title.toLowerCase() === coursePath.toLowerCase())
     );
   }, [scannedCourses, coursePath]);
@@ -94,7 +124,6 @@ function CoursePlayerContent({ params }: CoursePageProps) {
     }
 
     if (!activeLesson) {
-      // Check last watched lesson in user metadata
       const meta = libraryState.courses[course.relativePath];
       if (meta?.lastWatchedLessonPath) {
         const lastWatched = flatLessons.find(
@@ -105,7 +134,6 @@ function CoursePlayerContent({ params }: CoursePageProps) {
           return;
         }
       }
-      // Otherwise first lesson
       selectLesson(flatLessons[0]);
     }
   }, [course, lessonQuery, flatLessons, activeLesson, selectLesson, libraryState.courses]);
@@ -139,7 +167,7 @@ function CoursePlayerContent({ params }: CoursePageProps) {
   };
 
   const handleSeek = (seconds: number) => {
-    setTargetSeekTime(seconds);
+    setSeekRequest({ time: seconds, nonce: Date.now() });
   };
 
   if (!course) {
@@ -164,6 +192,20 @@ function CoursePlayerContent({ params }: CoursePageProps) {
   const currentLesson = activeLesson || flatLessons[0];
   const userMeta = libraryState.courses[course.relativePath];
   const isFavorite = userMeta?.isFavorite ?? false;
+  const savedLessonResumeTime =
+    initialSeekTime > 0
+      ? initialSeekTime
+      : currentLesson
+        ? libraryState.progress[currentLesson.relativePath]?.currentTimeSeconds || 0
+        : 0;
+
+  const originForHandoff =
+    lanBaseUrl || (typeof window !== 'undefined' ? window.location.origin : '');
+  const handoffUrl = currentLesson
+    ? `${originForHandoff}/course/${encodeURIComponent(coursePath)}?lesson=${encodeURIComponent(
+        currentLesson.relativePath
+      )}&t=${Math.round(currentVideoTime)}`
+    : originForHandoff;
 
   return (
     <div className="p-4 md:p-8 space-y-6 max-w-7xl mx-auto">
@@ -191,8 +233,17 @@ function CoursePlayerContent({ params }: CoursePageProps) {
 
         <div className="flex items-center gap-2 shrink-0">
           <button
+            onClick={() => setHandoffOpen(true)}
+            className="px-3 py-2 rounded-xl bg-[#121626] hover:bg-indigo-600/20 border border-white/5 hover:border-indigo-500/30 text-gray-300 hover:text-indigo-200 text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer"
+            title="Continue watching at this exact timestamp on your phone or tablet"
+          >
+            <Smartphone className="w-4 h-4 text-indigo-400" />
+            <span className="hidden sm:inline">Continue on Phone</span>
+          </button>
+
+          <button
             onClick={() => toggleFavoriteCourse(course.relativePath)}
-            className={`p-2 rounded-xl border border-white/5 transition-all ${
+            className={`p-2 rounded-xl border border-white/5 transition-all cursor-pointer ${
               isFavorite
                 ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
                 : 'bg-[#121626] text-gray-400 hover:text-white'
@@ -204,12 +255,54 @@ function CoursePlayerContent({ params }: CoursePageProps) {
         </div>
       </div>
 
+      {/* Phone Handoff QR Modal */}
+      {handoffOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="relative w-full max-w-sm bg-[#111422] border border-white/10 rounded-3xl p-6 shadow-2xl flex flex-col items-center text-center gap-4">
+            <button
+              onClick={() => setHandoffOpen(false)}
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="p-2.5 rounded-2xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-400">
+              <Smartphone className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white">Handoff to Phone or Tablet</h3>
+              <p className="text-xs text-gray-400 mt-1">
+                Scan with your phone camera on the same Wi-Fi to resume{' '}
+                <strong className="text-white">{currentLesson?.title}</strong> right at{' '}
+                <span className="font-mono text-indigo-300">[{formatTime(currentVideoTime)}]</span>.
+              </p>
+            </div>
+            <QrCode value={handoffUrl} size={176} />
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(handoffUrl);
+                  setCopiedHandoff(true);
+                  setTimeout(() => setCopiedHandoff(false), 1500);
+                } catch {}
+              }}
+              className="w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 hover:border-indigo-500/40 text-[11px] font-mono text-gray-300 flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <span className="truncate">{handoffUrl}</span>
+              {copiedHandoff ? (
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              ) : (
+                <Copy className="w-3.5 h-3.5 shrink-0 text-gray-400" />
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Theater Player & Side Panels */}
       <div
         className={`grid gap-6 ${
-          isTheaterMode
-            ? 'grid-cols-1'
-            : 'grid-cols-1 lg:grid-cols-12'
+          isTheaterMode ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-12'
         }`}
       >
         {/* Theater Video Player Column */}
@@ -217,7 +310,9 @@ function CoursePlayerContent({ params }: CoursePageProps) {
           {currentLesson && (
             <VideoPlayer
               lesson={currentLesson}
-              initialTime={targetSeekTime}
+              initialTime={savedLessonResumeTime}
+              seekRequest={seekRequest}
+              onTimeChange={setCurrentVideoTime}
               hasNextLesson={hasNextLesson}
               onNextLesson={handleNextLesson}
               onTakeNote={(t) => setNoteTimestampPreset(t)}
@@ -239,7 +334,7 @@ function CoursePlayerContent({ params }: CoursePageProps) {
             <button
               onClick={handlePrevLesson}
               disabled={!hasPrevLesson}
-              className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 disabled:opacity-30 text-gray-300 text-xs font-medium transition-all flex items-center gap-1.5"
+              className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 disabled:opacity-30 text-gray-300 text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <ChevronLeft className="w-4 h-4" />
               <span>Previous Lesson</span>
@@ -252,7 +347,7 @@ function CoursePlayerContent({ params }: CoursePageProps) {
             <button
               onClick={handleNextLesson}
               disabled={!hasNextLesson}
-              className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 text-white text-xs font-semibold transition-all flex items-center gap-1.5 shadow-md shadow-indigo-600/30"
+              className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 text-white text-xs font-semibold transition-all flex items-center gap-1.5 shadow-md shadow-indigo-600/30 cursor-pointer"
             >
               <span>Next Lesson</span>
               <ChevronRight className="w-4 h-4" />
@@ -268,10 +363,11 @@ function CoursePlayerContent({ params }: CoursePageProps) {
               : 'lg:col-span-4 flex flex-col gap-6'
           }`}
         >
-          {/* Notes Studio Drawer */}
+          {/* Notes, Transcript & AI Tutor Studio Drawer */}
           {currentLesson && (
-            <div className="h-[440px]">
+            <div className="h-[480px]">
               <NotesStudio
+                key={currentLesson.relativePath}
                 lesson={currentLesson}
                 currentVideoTime={currentVideoTime}
                 onSeek={handleSeek}

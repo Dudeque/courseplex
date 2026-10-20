@@ -1,18 +1,18 @@
 {
   "name": "courseplex",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Personal Netflix & Plex for local video courses",
   "author": "Dudeque",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
-    "dev": "next dev",
-    "dev:electron": "concurrently -k \"next dev\" \"electron .\"",
+    "dev": "next dev -H 0.0.0.0 -p 32433",
+    "dev:electron": "concurrently -k \"next dev -H 0.0.0.0 -p 32433\" \"electron .\"",
     "build": "next build",
-    "build:electron": "next build && node scripts/prepare-standalone.js && node scripts/patch-balanced-match.js",
+    "build:electron": "node scripts/clean-build.js && next build && node scripts/prepare-standalone.js && node scripts/patch-balanced-match.js",
     "dist:win": "pnpm build:electron && electron-builder --win",
     "postinstall": "node scripts/patch-balanced-match.js",
-    "start": "next start",
+    "start": "next start -H 0.0.0.0 -p 32433",
     "lint": "eslint"
   },
   "dependencies": {

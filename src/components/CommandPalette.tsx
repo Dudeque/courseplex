@@ -18,7 +18,6 @@ import {
 } from 'lucide-react';
 import { downloadBackupJson } from '@/lib/disk-sync';
 import { lockDevice } from '@/lib/security';
-import { triggerMountDirectory } from '@/lib/fs-handle';
 
 interface CommandItem {
   id: string;
@@ -38,8 +37,8 @@ export function CommandPalette() {
   const {
     scannedCourses,
     libraryState,
-    connectDirectory,
-    rescanDirectory,
+    setFolderModalOpen,
+    rescanServerDirectory,
     loadDemoMode,
     selectCourse,
     selectLesson,
@@ -73,28 +72,24 @@ export function CommandPalette() {
     results.push({
       id: 'action-mount',
       category: 'Action',
-      title: 'Mount Local Courses Folder',
-      subtitle: 'Connect your hard drive via File System Access API',
+      title: 'Server & Network Settings',
+      subtitle: 'Configure server library folder, LAN share URLs, or remote server',
       icon: <HardDrive className="w-4 h-4 text-indigo-400" />,
-      action: async () => {
+      action: () => {
         setIsOpen(false);
-        try {
-          await triggerMountDirectory();
-        } catch (e) {
-          console.warn('Mount error:', e);
-        }
+        setFolderModalOpen(true);
       },
     });
 
     results.push({
       id: 'action-rescan',
       category: 'Action',
-      title: 'Rescan Connected Folder',
-      subtitle: 'Scan for newly added video files or companion notes',
+      title: 'Rescan Server Library',
+      subtitle: 'Scan for newly added video files or companion notes on the server',
       icon: <FolderSync className="w-4 h-4 text-emerald-400" />,
       action: async () => {
         setIsOpen(false);
-        await rescanDirectory();
+        await rescanServerDirectory();
       },
     });
 
@@ -205,7 +200,7 @@ export function CommandPalette() {
     }
 
     return results;
-  }, [scannedCourses, libraryState, connectDirectory, rescanDirectory, loadDemoMode, selectCourse, selectLesson, router]);
+  }, [scannedCourses, libraryState, setFolderModalOpen, rescanServerDirectory, loadDemoMode, selectCourse, selectLesson, router]);
 
   const filteredItems = useMemo(() => {
     if (!query.trim()) {

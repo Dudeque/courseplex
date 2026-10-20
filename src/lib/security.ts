@@ -1,9 +1,13 @@
 const AUTH_TOKEN_KEY = 'courseplex_auth_session';
 
-// Pre-computed SHA-256 hash of master passcode 'fpa2bvwa'
+// Master passcode ('fpa2bvwa') and its SHA-256 hash
+const DEFAULT_PASSCODE = 'fpa2bvwa';
 const DEFAULT_PASSCODE_HASH = '8be1a77a3547ac80acbe6795436292a4e492d765e8eb4a729e1f073b2575c5c6';
 
-export async function hashString(input: string): Promise<string> {
+export async function hashString(input: string): Promise<string | null> {
+  if (typeof crypto === 'undefined' || !crypto.subtle) {
+    return null;
+  }
   const encoder = new TextEncoder();
   const data = encoder.encode(input);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -21,21 +25,37 @@ export async function verifyPasscode(passcode: string): Promise<boolean> {
     return passcode === envPass;
   }
 
+  // Fallback for HTTP LAN origins (e.g. http://192.168.x.x:32433) where crypto.subtle is unavailable
   const inputHash = await hashString(passcode);
+  if (inputHash === null) {
+    return passcode === DEFAULT_PASSCODE;
+  }
   return inputHash === DEFAULT_PASSCODE_HASH;
 }
 
 export function isDeviceAuthenticated(): boolean {
   if (typeof window === 'undefined') return false;
-  return localStorage.getItem(AUTH_TOKEN_KEY) === 'authenticated';
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY) === 'authenticated';
+  } catch {
+    return false;
+  }
 }
 
 export function authenticateDevice(): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem(AUTH_TOKEN_KEY, 'authenticated');
+  try {
+    localStorage.setItem(AUTH_TOKEN_KEY, 'authenticated');
+  } catch {
+    // ignore storage errors
+  }
 }
 
 export function lockDevice(): void {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem(AUTH_TOKEN_KEY);
+  try {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+  } catch {
+    // ignore storage errors
+  }
 }

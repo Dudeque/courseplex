@@ -1,3 +1,9 @@
+export interface LessonChapter {
+  title: string;
+  startSeconds: number;
+  summary?: string;
+}
+
 export interface CourseLibraryState {
   version: number;
   lastSyncedAt: string;
@@ -7,6 +13,8 @@ export interface CourseLibraryState {
   notes: Record<string, LessonNote[]>; // Keyed by relative lesson path
   studySessions: StudySession[]; // Granular log for heatmaps & velocity stats
   dailyGoalMinutes: number;
+  durations?: Record<string, number>; // Cached lesson durations on server
+  chapters?: Record<string, LessonChapter[]>; // AI-generated chapters per lesson
 }
 
 export interface ClusterMeta {
