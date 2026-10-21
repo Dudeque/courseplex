@@ -40,7 +40,7 @@ const COVER_NAMES = new Set([
 const IGNORED_DIRECTORIES = new Set([
   'node_modules', '.git', '.next', '.turbo', 'dist', 'build', 'coverage',
   '__pycache__', '.venv', 'venv', 'vendor', '.cache', '.vscode', '.idea',
-  'library', '$recycle.bin', 'system volume information'
+  '$recycle.bin', 'system volume information'
 ]);
 
 async function isMpegTsFile(filePath: string): Promise<boolean> {
@@ -83,14 +83,20 @@ async function getDirItems(dirPath: string): Promise<DiskItem[]> {
     const items: DiskItem[] = [];
     for (const e of entries) {
       if (IGNORED_DIRECTORIES.has(e.name.toLowerCase())) continue;
-      let isDir = e.isDirectory();
-      if (!isDir && (e.isSymbolicLink() || (typeof e.isBlockDevice === 'function' && !e.isFile()))) {
-        try {
+      let isDir = false;
+      try {
+        if (e.isDirectory()) {
+          isDir = true;
+        } else if (e.isFile()) {
+          isDir = false;
+        } else {
+          // Reparse points, symlinks, or ambiguous types
           const stat = await fs.promises.stat(path.join(dirPath, e.name));
           isDir = stat.isDirectory();
-        } catch {
-          // ignore stat errors
         }
+      } catch {
+        // Fall back to Dirent check
+        isDir = e.isDirectory();
       }
       items.push({
         name: e.name,
@@ -646,7 +652,7 @@ async function deepScanServerCourses(coursesDir: string): Promise<{
   const courseMap = new Map<string, CourseBucket>();
 
   for (const v of videoFiles) {
-    const parts = v.relDir === '.' ? [] : v.relDir.split('/');
+    const parts = v.relDir === '.' ? [] : v.relDir.split(/[\\/]/).filter(Boolean);
 
     let courseKey = '_root_';
     let courseTitle = path.basename(coursesDir) || 'Local Course';
@@ -877,6 +883,52 @@ async function deepScanServerCourses(coursesDir: string): Promise<{
   }
 
   courses.sort((a, b) => collator.compare(a.title, b.title));
+
+  // Ultimate fallback: if videoFiles were discovered on disk but bucket/module grouping yielded 0 courses,
+  // ensure they are never lost: build a single course containing all discovered videos.
+  if (courses.length === 0 && videoFiles.length > 0) {
+    const fallbackLessons: ScannedLesson[] = videoFiles.map((v, idx) => {
+      const { title, orderIndex } = cleanTitle(v.name);
+      return {
+        id: `lesson-${v.relPath}`,
+        title,
+        rawTitle: v.name,
+        orderIndex: orderIndex !== 9999 ? orderIndex : idx + 1,
+        relativePath: v.relPath,
+        coursePath: '_root_',
+        modulePath: '_root_',
+        isVideo: true,
+        isResourceOnly: false,
+        durationSeconds: 0,
+        attachments: [],
+      };
+    });
+
+    fallbackLessons.sort((a, b) => {
+      if (a.orderIndex !== b.orderIndex) return a.orderIndex - b.orderIndex;
+      return collator.compare(a.title, b.title);
+    });
+
+    const fallbackCourseTitle = path.basename(coursesDir) || 'Local Course';
+    courses.push({
+      id: 'course-root',
+      title: fallbackCourseTitle,
+      rawTitle: fallbackCourseTitle,
+      relativePath: '_root_',
+      modules: [
+        {
+          id: 'mod-root',
+          title: 'Course Curriculum',
+          rawTitle: 'Course Curriculum',
+          orderIndex: 1,
+          relativePath: '_root_',
+          lessons: fallbackLessons,
+        },
+      ],
+      totalLessons: fallbackLessons.length,
+      totalDurationSeconds: 0,
+    });
+  }
 
   const clusters: ScannedCluster[] = [];
   let colorIdx = 0;

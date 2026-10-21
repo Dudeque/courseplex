@@ -37,7 +37,7 @@ export const COVER_NAMES = new Set([
 export const IGNORED_DIRECTORIES = new Set([
   'node_modules', '.git', '.next', '.turbo', 'dist', 'build', 'coverage',
   '__pycache__', '.venv', 'venv', 'vendor', '.cache', '.vscode', '.idea',
-  'library', '$recycle.bin', 'system volume information'
+  '$recycle.bin', 'system volume information'
 ]);
 
 export async function isMpegTsFileInBrowser(file: File): Promise<boolean> {

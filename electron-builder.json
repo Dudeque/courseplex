@@ -10,7 +10,8 @@
     {
       "provider": "github",
       "owner": "Dudeque",
-      "repo": "courseplex"
+      "repo": "courseplex",
+      "releaseType": "release"
     }
   ],
   "asar": false,
@@ -21,6 +22,7 @@
     "package.json"
   ],
   "win": {
+    "verifyUpdateCodeSignature": false,
     "target": [
       {
         "target": "nsis",

@@ -1,4 +1,4 @@
-const { app, dialog, Tray, Menu, shell, clipboard, nativeImage, utilityProcess } = require('electron');
+const { app, dialog, BrowserWindow, Notification, Tray, Menu, shell, clipboard, nativeImage, utilityProcess } = require('electron');
 const path = require('node:path');
 const os = require('node:os');
 const { spawn } = require('node:child_process');
@@ -13,6 +13,38 @@ const SERVER_PORT = Number(process.env.PORT) || 32433;
 let tray = null;
 let serverProcess = null;
 let serverStatus = 'starting'; // starting | running | error
+
+// Helper to display dialogs on top in Windows even when CoursePlex has no open windows.
+async function showForegroundMessageBox(options) {
+  let dummy = null;
+  try {
+    dummy = new BrowserWindow({
+      width: 1,
+      height: 1,
+      show: false,
+      transparent: true,
+      frame: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+    });
+    dummy.setVisibleOnAllWorkspaces(true);
+    return await dialog.showMessageBox(dummy, options);
+  } catch (_) {
+    return await dialog.showMessageBox(options);
+  } finally {
+    if (dummy && !dummy.isDestroyed()) {
+      dummy.destroy();
+    }
+  }
+}
+
+function showNotification(title, body) {
+  try {
+    if (Notification.isSupported()) {
+      new Notification({ title, body, icon: path.join(__dirname, 'tray.png') }).show();
+    }
+  } catch (_) {}
+}
 
 function getStandaloneDir() {
   if (!app.isPackaged) {
@@ -158,18 +190,42 @@ function refreshTray() {
     {
       label: 'Check for Updates...',
       click: async () => {
+        showNotification('CoursePlex', 'Checking for updates...');
         if (!app.isPackaged) {
-          dialog.showMessageBox({ type: 'info', message: 'Auto-updates are active in the packaged app.' });
+          showForegroundMessageBox({
+            type: 'info',
+            title: 'CoursePlex',
+            message: 'Auto-updates are only active in the packaged app.',
+            buttons: ['Check GitHub Releases', 'Dismiss'],
+            defaultId: 0,
+            cancelId: 1,
+          }).then(({ response }) => {
+            if (response === 0) {
+              shell.openExternal('https://github.com/Dudeque/courseplex/releases/latest');
+            }
+          });
           return;
         }
+
         try {
+          isCheckingForUpdate = true;
           const { autoUpdater } = require('electron-updater');
-          const res = await autoUpdater.checkForUpdates();
-          if (!res || !res.updateInfo || res.updateInfo.version === app.getVersion()) {
-            dialog.showMessageBox({ type: 'info', message: `You are on the latest version (${app.getVersion()}).` });
-          }
+          await autoUpdater.checkForUpdates();
         } catch (err) {
-          dialog.showErrorBox('Update Check Failed', err?.message || 'Unknown error');
+          isCheckingForUpdate = false;
+          showForegroundMessageBox({
+            type: 'error',
+            title: 'Update Check Failed',
+            message: 'Unable to check for updates.',
+            detail: err?.message || String(err),
+            buttons: ['Open Releases Page', 'Dismiss'],
+            defaultId: 0,
+            cancelId: 1,
+          }).then(({ response }) => {
+            if (response === 0) {
+              shell.openExternal('https://github.com/Dudeque/courseplex/releases/latest');
+            }
+          });
         }
       },
     },
@@ -180,11 +236,70 @@ function refreshTray() {
   tray.setToolTip(statusLabel);
 }
 
+let isCheckingForUpdate = false;
+
 function setupAutoUpdater() {
   const { autoUpdater } = require('electron-updater');
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.on('error', (err) => console.warn('Auto-updater:', err ? err.message : err));
+
+  autoUpdater.on('checking-for-update', () => {
+    console.log('Checking for updates...');
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    showNotification('CoursePlex Update Available', `Downloading version ${info.version}...`);
+  });
+
+  autoUpdater.on('update-not-available', (info) => {
+    if (isCheckingForUpdate) {
+      isCheckingForUpdate = false;
+      showForegroundMessageBox({
+        type: 'info',
+        title: 'CoursePlex',
+        message: `You are on the latest version (v${app.getVersion()}).`,
+        buttons: ['OK'],
+      });
+    }
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.warn('Auto-updater:', err ? err.message : err);
+    if (isCheckingForUpdate) {
+      isCheckingForUpdate = false;
+      showForegroundMessageBox({
+        type: 'error',
+        title: 'Update Check Failed',
+        message: 'Could not check for updates.',
+        detail: err?.message || String(err),
+        buttons: ['Open Releases Page', 'Dismiss'],
+        defaultId: 0,
+        cancelId: 1,
+      }).then(({ response }) => {
+        if (response === 0) {
+          shell.openExternal('https://github.com/Dudeque/courseplex/releases/latest');
+        }
+      });
+    }
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    isCheckingForUpdate = false;
+    showForegroundMessageBox({
+      type: 'info',
+      title: 'Update Ready',
+      message: `CoursePlex v${info.version} has been downloaded.`,
+      detail: 'Restart now to install the update?',
+      buttons: ['Restart and Install', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    }).then(({ response }) => {
+      if (response === 0) {
+        autoUpdater.quitAndInstall();
+      }
+    });
+  });
+
   setTimeout(() => autoUpdater.checkForUpdatesAndNotify().catch(() => {}), 4000);
 }
 
@@ -205,6 +320,9 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
+    if (process.platform === 'win32') {
+      app.setAppUserModelId('com.courseplex.app');
+    }
     if (process.platform === 'darwin') app.dock?.hide();
 
     const icon = nativeImage.createFromPath(path.join(__dirname, 'tray.png'));
