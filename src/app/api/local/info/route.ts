@@ -1,8 +1,15 @@
 import os from 'node:os';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse, connection } from 'next/server';
 import { getLocalCoursesDir } from '@/lib/server-config';
 
-export async function GET() {
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+  'Pragma': 'no-cache',
+  'Expires': '0',
+};
+
+export async function GET(_req: NextRequest) {
+  await connection();
   const port = Number(process.env.PORT) || 32433;
   const addresses: string[] = [];
   for (const list of Object.values(os.networkInterfaces())) {
@@ -11,13 +18,16 @@ export async function GET() {
     }
   }
   const dir = await getLocalCoursesDir();
-  return NextResponse.json({
-    app: 'courseplex',
-    name: os.hostname(),
-    platform: process.platform,
-    port,
-    configured: Boolean(dir),
-    coursesDir: dir,
-    lanUrls: addresses.map((a) => `http://${a}:${port}`),
-  });
+  return NextResponse.json(
+    {
+      app: 'courseplex',
+      name: os.hostname(),
+      platform: process.platform,
+      port,
+      configured: Boolean(dir),
+      coursesDir: dir,
+      lanUrls: addresses.map((a) => `http://${a}:${port}`),
+    },
+    { headers: NO_CACHE_HEADERS }
+  );
 }

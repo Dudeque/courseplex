@@ -203,7 +203,10 @@ export const useCourseStore = create<CourseStoreState>((set, get) => {
       }
 
       try {
-        const serverRes = await fetch(apiUrl('/api/local/courses'));
+        const serverRes = await fetch(apiUrl(`/api/local/courses?t=${Date.now()}`), {
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache' },
+        });
         if (serverRes.ok) {
           const data = await serverRes.json();
           if (data.configured) {
@@ -256,30 +259,33 @@ export const useCourseStore = create<CourseStoreState>((set, get) => {
     rescanServerDirectory: async () => {
       set({ isScanning: true, scanStatus: 'Scanning courses on server disk...' });
       try {
-        const res = await fetch(apiUrl('/api/local/courses'));
+        const res = await fetch(apiUrl(`/api/local/courses?t=${Date.now()}`), {
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache' },
+        });
         const data = await res.json().catch(() => null);
         if (!res.ok) {
           throw new Error(data?.error || 'Failed to scan server courses');
         }
 
-        const dirName = data.coursesDir
+        const dirName = data?.coursesDir
           ? data.coursesDir.split(/[\\/]/).filter(Boolean).pop() || data.coursesDir
           : 'Server Library';
 
         set({
           isServerMode: true,
           isDemoMode: false,
-          serverCoursesDir: data.coursesDir,
+          serverCoursesDir: data?.coursesDir || null,
           rootDirName: dirName,
-          scannedCourses: data.courses || [],
-          scannedClusters: data.clusters || [],
-          libraryState: data.libraryState || get().libraryState,
+          scannedCourses: data?.courses || [],
+          scannedClusters: data?.clusters || [],
+          libraryState: data?.libraryState || get().libraryState,
           isScanning: false,
           scanStatus: '',
           isInitialized: true,
         });
 
-        hydrateMissingDurations(data.courses || []);
+        hydrateMissingDurations(data?.courses || []);
       } catch (err) {
         set({ isScanning: false, scanStatus: '' });
         throw err;

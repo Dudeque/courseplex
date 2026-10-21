@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, connection } from 'next/server';
 
 export type AiProvider = 'gemini' | 'openai' | 'anthropic' | 'groq' | 'ollama';
 
@@ -191,6 +191,7 @@ async function callLlm(
 }
 
 export async function GET(req: NextRequest) {
+  await connection();
   void req.nextUrl.searchParams;
   const cfg = await readAiConfig();
   let ollamaModels: string[] = [];

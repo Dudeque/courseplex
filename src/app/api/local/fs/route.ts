@@ -1,7 +1,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, connection } from 'next/server';
+
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+  'Pragma': 'no-cache',
+  'Expires': '0',
+};
 
 async function listDrives(): Promise<{ name: string; path: string }[]> {
   if (process.platform !== 'win32') return [{ name: '/', path: '/' }];
@@ -23,6 +29,7 @@ async function listDrives(): Promise<{ name: string; path: string }[]> {
 
 /** GET /api/local/fs?path=<dir>  -> subdirectories of dir (or drives / home when empty). */
 export async function GET(req: NextRequest) {
+  await connection();
   const requested = req.nextUrl.searchParams.get('path');
   const home = os.homedir();
 
@@ -31,14 +38,17 @@ export async function GET(req: NextRequest) {
     const shortcuts = ['Videos', 'Movies', 'Downloads', 'Documents', 'Desktop']
       .map((l) => ({ name: l, path: path.join(/*turbopackIgnore: true*/ home, l) }))
       .filter((d) => fs.existsSync(/*turbopackIgnore: true*/ d.path));
-    return NextResponse.json({
-      path: null,
-      parent: null,
-      home,
-      entries: [],
-      drives: await listDrives(),
-      shortcuts: [{ name: 'Home', path: home }, ...shortcuts],
-    });
+    return NextResponse.json(
+      {
+        path: null,
+        parent: null,
+        home,
+        entries: [],
+        drives: await listDrives(),
+        shortcuts: [{ name: 'Home', path: home }, ...shortcuts],
+      },
+      { headers: NO_CACHE_HEADERS }
+    );
   }
 
   const resolved = path.resolve(requested);
@@ -60,13 +70,16 @@ export async function GET(req: NextRequest) {
       parentDir = path.dirname(resolved);
     }
 
-    return NextResponse.json({
-      path: resolved,
-      parent: parentDir, // null signals that navigating up should go back to the Drive/Root selector
-      entries,
-    });
+    return NextResponse.json(
+      {
+        path: resolved,
+        parent: parentDir, // null signals that navigating up should go back to the Drive/Root selector
+        entries,
+      },
+      { headers: NO_CACHE_HEADERS }
+    );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Cannot read directory';
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: message }, { status: 400, headers: NO_CACHE_HEADERS });
   }
 }

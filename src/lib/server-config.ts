@@ -2,7 +2,35 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-function getConfigDir(): string {
+export function normalizePath(p: string): string {
+  let cleaned = p.trim().replace(/^["']|["']$/g, '');
+  // Preserve Windows drive root: 'D:\' or 'D:/'
+  if (/^[a-zA-Z]:[\\/]$/.test(cleaned)) {
+    return cleaned.replace('/', '\\');
+  }
+  return cleaned.replace(/[\\/]+$/, '');
+}
+
+export async function isExistingDirectory(dirPath: string): Promise<boolean> {
+  const normalized = normalizePath(dirPath);
+  try {
+    const stat = await fs.promises.stat(normalized);
+    if (stat.isDirectory()) return true;
+  } catch (statErr) {
+    // Windows permissions or drive quirks can cause promises.stat to fail
+    try {
+      if (fs.existsSync(normalized)) {
+        const syncStat = fs.statSync(normalized);
+        if (syncStat.isDirectory()) return true;
+      }
+    } catch {
+      // Ignored
+    }
+  }
+  return false;
+}
+
+export function getConfigDir(): string {
   if (process.env.COURSEPLEX_USER_DATA && process.env.COURSEPLEX_USER_DATA.trim()) {
     return process.env.COURSEPLEX_USER_DATA.trim();
   }
@@ -12,12 +40,13 @@ function getConfigDir(): string {
   return path.join(os.homedir(), '.courseplex');
 }
 
-function getCandidateConfigFilePaths(): string[] {
+export function getCandidateConfigFilePaths(): string[] {
   const primaryDir = getConfigDir();
   return [
     path.join(primaryDir, 'courseplex-config.json'),
     path.join(primaryDir, '.courseplex-config.json'),
     path.join(os.homedir(), '.courseplex', 'config.json'),
+    path.join(os.homedir(), '.courseplex', 'courseplex-config.json'),
     path.join(process.cwd(), '.courseplex-config.json'),
   ];
 }
@@ -25,12 +54,9 @@ function getCandidateConfigFilePaths(): string[] {
 export async function getLocalCoursesDir(): Promise<string | null> {
   // 1. Check environment variable
   if (process.env.COURSES_DIR && process.env.COURSES_DIR.trim()) {
-    const envDir = process.env.COURSES_DIR.trim();
-    try {
-      const stat = await fs.promises.stat(envDir);
-      if (stat.isDirectory()) return envDir;
-    } catch {
-      // Env var path invalid or inaccessible
+    const envDir = normalizePath(process.env.COURSES_DIR.trim());
+    if (await isExistingDirectory(envDir)) {
+      return envDir;
     }
   }
 
@@ -42,14 +68,16 @@ export async function getLocalCoursesDir(): Promise<string | null> {
         const raw = await fs.promises.readFile(/*turbopackIgnore: true*/ configPath, 'utf-8');
         const data = JSON.parse(raw);
         if (data.coursesDir && typeof data.coursesDir === 'string') {
-          const stat = await fs.promises.stat(/*turbopackIgnore: true*/ data.coursesDir);
-          if (stat.isDirectory()) {
-            return data.coursesDir;
+          const cleanDir = normalizePath(data.coursesDir);
+          if (await isExistingDirectory(cleanDir)) {
+            return cleanDir;
+          } else {
+            console.warn(`[server-config] Directory in ${configPath} does not exist or is not a directory:`, cleanDir);
           }
         }
       }
-    } catch {
-      // Continue checking next candidate path
+    } catch (e) {
+      console.warn(`[server-config] Error reading candidate config ${configPath}:`, e);
     }
   }
 
@@ -57,22 +85,36 @@ export async function getLocalCoursesDir(): Promise<string | null> {
 }
 
 export async function setLocalCoursesDir(dirPath: string): Promise<string> {
-  const cleaned = dirPath.replace(/^["']|["']$/g, '').trim();
+  const cleaned = normalizePath(dirPath);
   const resolved = path.resolve(cleaned);
-  const stat = await fs.promises.stat(/*turbopackIgnore: true*/ resolved);
-  if (!stat.isDirectory()) {
-    throw new Error('Path is not a valid directory');
+  if (!(await isExistingDirectory(resolved))) {
+    throw new Error(`Path is not a valid directory: ${resolved}`);
   }
 
   const primaryDir = getConfigDir();
   await fs.promises.mkdir(primaryDir, { recursive: true });
   const targetFile = path.join(primaryDir, 'courseplex-config.json');
 
+  const configContent = JSON.stringify({ coursesDir: resolved, updatedAt: new Date().toISOString() }, null, 2);
+
   await fs.promises.writeFile(
     /*turbopackIgnore: true*/ targetFile,
-    JSON.stringify({ coursesDir: resolved, updatedAt: new Date().toISOString() }, null, 2),
+    configContent,
     'utf-8'
   );
+
+  // Redundancy write to secondary location (~/.courseplex/config.json) to ensure cross-process discovery
+  try {
+    const secondaryDir = path.join(os.homedir(), '.courseplex');
+    await fs.promises.mkdir(secondaryDir, { recursive: true });
+    await fs.promises.writeFile(
+      /*turbopackIgnore: true*/ path.join(secondaryDir, 'config.json'),
+      configContent,
+      'utf-8'
+    );
+  } catch {
+    // Non-fatal
+  }
 
   return resolved;
 }
@@ -89,4 +131,3 @@ export async function clearLocalCoursesDir(): Promise<void> {
     }
   }
 }
-
